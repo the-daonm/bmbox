@@ -81,18 +81,28 @@ func Up(t *topology.Topology, raw []byte, ws *workspace.Workspace, opt Options) 
 	// 1. Networks
 	log("==> Networks")
 	needForwarding := false
-	for _, n := range t.Spec.Networks {
-		spec := network.BridgeSpec{
+	specs := make([]network.BridgeSpec, len(t.Spec.Networks))
+	for i, n := range t.Spec.Networks {
+		specs[i] = network.BridgeSpec{
 			Name:     n.Bridge,
 			Owner:    lab + "/" + n.Name,
 			MTU:      n.MTU,
 			External: n.External,
 		}
 		if n.CIDR != "" {
-			spec.Gateway, _ = topology.ParseGateway(n.CIDR)
+			specs[i].Gateway, _ = topology.ParseGateway(n.CIDR)
 			needForwarding = true
 		}
-		res, err := network.EnsureBridge(spec)
+	}
+	// Check every network before touching any, so a conflict on the last
+	// one does not leave the first ones half-created.
+	for i, n := range t.Spec.Networks {
+		if _, err := network.CheckBridge(specs[i]); err != nil {
+			return st, fmt.Errorf("network %s: %w", n.Name, err)
+		}
+	}
+	for i, n := range t.Spec.Networks {
+		res, err := network.EnsureBridge(specs[i])
 		if err != nil {
 			return st, fmt.Errorf("network %s: %w", n.Name, err)
 		}

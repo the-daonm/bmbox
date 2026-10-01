@@ -45,32 +45,16 @@ func OwnerAlias(owner string) string { return aliasPrefix + owner }
 func EnsureBridge(spec BridgeSpec) (*BridgeResult, error) {
 	res := &BridgeResult{Name: spec.Name, External: spec.External}
 
-	link, err := netlink.LinkByName(spec.Name)
-	var notFound netlink.LinkNotFoundError
-	switch {
-	case errors.As(err, &notFound):
-		link = nil
-	case err != nil:
-		return nil, fmt.Errorf("lookup %s: %w", spec.Name, err)
+	link, err := CheckBridge(spec)
+	if err != nil {
+		return nil, err
 	}
-
 	if spec.External {
-		if link == nil {
-			return nil, fmt.Errorf("external bridge %q does not exist", spec.Name)
-		}
-		if link.Type() != "bridge" {
-			return nil, fmt.Errorf("external interface %q is a %s, not a Linux bridge", spec.Name, link.Type())
-		}
 		return res, nil
 	}
 
 	alias := OwnerAlias(spec.Owner)
-	if link != nil {
-		if link.Type() != "bridge" || link.Attrs().Alias != alias {
-			return nil, fmt.Errorf("interface %q already exists and is not managed by bmbox for %s (type=%s alias=%q); "+
-				"pick another bridge name or mark the network external", spec.Name, spec.Owner, link.Type(), link.Attrs().Alias)
-		}
-	} else {
+	if link == nil {
 		br := &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: spec.Name, MTU: spec.MTU}}
 		if err := netlink.LinkAdd(br); err != nil {
 			return nil, wrapPerm(fmt.Errorf("create bridge %s: %w", spec.Name, err))
@@ -92,6 +76,63 @@ func EnsureBridge(spec BridgeSpec) (*BridgeResult, error) {
 		return nil, err
 	}
 	return res, nil
+}
+
+// CheckBridge verifies, without changing anything, that the bridge can be
+// created or reused: the name is free or already owned by this lab network,
+// and the gateway subnet does not clash with an address on another
+// interface. It returns the existing link, or nil if it must be created.
+func CheckBridge(spec BridgeSpec) (netlink.Link, error) {
+	link, err := netlink.LinkByName(spec.Name)
+	var notFound netlink.LinkNotFoundError
+	switch {
+	case errors.As(err, &notFound):
+		link = nil
+	case err != nil:
+		return nil, fmt.Errorf("lookup %s: %w", spec.Name, err)
+	}
+
+	if spec.External {
+		if link == nil {
+			return nil, fmt.Errorf("external bridge %q does not exist", spec.Name)
+		}
+		if link.Type() != "bridge" {
+			return nil, fmt.Errorf("external interface %q is a %s, not a Linux bridge", spec.Name, link.Type())
+		}
+		return link, nil
+	}
+
+	if link != nil && (link.Type() != "bridge" || link.Attrs().Alias != OwnerAlias(spec.Owner)) {
+		return nil, fmt.Errorf("interface %q already exists and is not managed by bmbox for %s (type=%s alias=%q); "+
+			"pick another bridge name or mark the network external", spec.Name, spec.Owner, link.Type(), link.Attrs().Alias)
+	}
+
+	if spec.Gateway.IsValid() {
+		addrs, err := netlink.AddrList(nil, netlink.FAMILY_ALL)
+		if err != nil {
+			return nil, fmt.Errorf("list host addresses: %w", err)
+		}
+		for _, a := range addrs {
+			if link != nil && a.LinkIndex == link.Attrs().Index {
+				continue
+			}
+			ip, ok := netip.AddrFromSlice(a.IP)
+			if !ok {
+				continue
+			}
+			ones, _ := a.Mask.Size()
+			host := netip.PrefixFrom(ip.Unmap(), ones)
+			if host.Overlaps(spec.Gateway.Masked()) {
+				other := fmt.Sprintf("ifindex %d", a.LinkIndex)
+				if l, err := netlink.LinkByIndex(a.LinkIndex); err == nil {
+					other = l.Attrs().Name
+				}
+				return nil, fmt.Errorf("subnet %s of %s overlaps %s already configured on %s",
+					spec.Gateway.Masked(), spec.Name, host, other)
+			}
+		}
+	}
+	return link, nil
 }
 
 func configureBridge(link netlink.Link, spec BridgeSpec, res *BridgeResult) error {
