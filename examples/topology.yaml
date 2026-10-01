@@ -1,0 +1,45 @@
+# bmbox topology: two UEFI "bare-metal" nodes on an isolated PXE network
+# plus a separate data network.
+apiVersion: bmbox.io/v1alpha1
+kind: Topology
+metadata:
+  name: demo
+spec:
+  defaults:
+    cpus: 2
+    memory: 4GiB
+    boot: [network, disk]   # PXE first, like a real server waiting for provisioning
+
+  # Directory as seen by libvirtd. Defaults to /var/lib/libvirt/bmbox/<name>.
+  # storage:
+  #   path: /var/lib/libvirt/bmbox/demo
+
+  # Leave empty to let libvirt (domain capabilities) pick the OVMF firmware.
+  # uefi:
+  #   loader: /usr/share/OVMF/OVMF_CODE_4M.fd
+  #   varsTemplate: /usr/share/OVMF/OVMF_VARS_4M.fd
+
+  networks:
+    - name: pxe
+      cidr: 172.30.10.0/24   # host gets 172.30.10.1 on the bridge
+    - name: data             # pure L2 segment, no host address
+
+  nodes:
+    - name: node1
+      memory: 8GiB
+      disks:
+        - size: 40GiB
+        - size: 10GiB
+      nics:
+        - network: pxe
+        - network: data
+      bmc:
+        type: redfish
+
+    - name: node2
+      nics:
+        - network: pxe
+          mac: "52:54:00:aa:00:02"
+      bmc:
+        type: ipmi
+        port: 6231
