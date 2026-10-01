@@ -7,12 +7,16 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"bmbox/pkg/hypervisor"
 	"bmbox/pkg/topology"
 )
 
 var version = "dev"
 
-var topologyFile string
+var (
+	topologyFile string
+	libvirtURI   string
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "bmbox",
@@ -34,7 +38,12 @@ func Execute() error {
 }
 
 func init() {
+	defURI := os.Getenv("LIBVIRT_DEFAULT_URI")
+	if defURI == "" {
+		defURI = hypervisor.DefaultURI
+	}
 	rootCmd.PersistentFlags().StringVarP(&topologyFile, "file", "f", "topology.yaml", "topology file")
+	rootCmd.PersistentFlags().StringVarP(&libvirtURI, "connect", "c", defURI, "libvirt connection URI")
 }
 
 // loadTopology returns the parsed topology together with the raw bytes that
