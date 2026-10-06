@@ -181,20 +181,27 @@ func configureBridge(link netlink.Link, spec BridgeSpec, res *BridgeResult) erro
 	return nil
 }
 
+// ErrNotOwned is returned when a bridge exists but bmbox did not create it.
+var ErrNotOwned = errors.New("not owned by bmbox")
+
 // DeleteBridge removes a bridge only if bmbox owns it for the given owner.
-func DeleteBridge(name, owner string) error {
+// A missing bridge is not an error.
+func DeleteBridge(name, owner string) (deleted bool, err error) {
 	link, err := netlink.LinkByName(name)
 	var notFound netlink.LinkNotFoundError
 	if errors.As(err, &notFound) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	if link.Attrs().Alias != OwnerAlias(owner) {
-		return fmt.Errorf("refusing to delete %s: not owned by bmbox for %s", name, owner)
+		return false, fmt.Errorf("refusing to delete %s: %w for %s", name, ErrNotOwned, owner)
 	}
-	return wrapPerm(netlink.LinkDel(link))
+	if err := netlink.LinkDel(link); err != nil {
+		return false, wrapPerm(fmt.Errorf("delete bridge %s: %w", name, err))
+	}
+	return true, nil
 }
 
 func wrapPerm(err error) error {
