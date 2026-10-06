@@ -11,9 +11,10 @@ import (
 )
 
 var consoleCmd = &cobra.Command{
-	Use:   "console NODE",
-	Short: "Attach the terminal to a node's serial console (Ctrl-] to detach)",
-	Args:  cobra.ExactArgs(1),
+	Use:               "console NODE",
+	Short:             "Attach the terminal to a node's serial console (Ctrl-] to detach)",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeNodes,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		lab, t, err := resolveLab()
 		if err != nil {

@@ -62,6 +62,23 @@ func resolveLab() (string, *topology.Topology, error) {
 	return t.Metadata.Name, t, nil
 }
 
+// completeNodes offers the node names of the topology file for shell
+// completion of a single NODE argument.
+func completeNodes(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	t, _, err := loadTopology()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var names []string
+	for _, n := range t.Spec.Nodes {
+		names = append(names, n.Name)
+	}
+	return names, cobra.ShellCompDirectiveNoFileComp
+}
+
 func addLabFlag(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&labFlag, "lab", "", "lab name (default: metadata.name of the topology file)")
 }
