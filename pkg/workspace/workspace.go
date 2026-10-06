@@ -18,6 +18,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -222,4 +223,54 @@ func (w *Workspace) SaveTopology(lab string, raw []byte) error {
 func (w *Workspace) SaveDomainXML(lab, node, xml string) (string, error) {
 	p := filepath.Join(w.LabDir(lab), "domains", node+".xml")
 	return p, w.WriteFile(p, []byte(xml))
+}
+
+// Lock takes an exclusive per-lab lock so two bmbox commands never change
+// the same lab at once. Call the returned function to release it.
+func (w *Workspace) Lock(lab string) (func(), error) {
+	if err := w.mkdir(w.LabDir(lab)); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(w.LabDir(lab), ".lock")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	_ = w.chown(path)
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("another bmbox command is already running for lab %q", lab)
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}, nil
+}
+
+// Tools remembers where the BMC programs were found, so they only have to
+// be given once per host.
+type Tools struct {
+	SushyEmulator string `json:"sushyEmulator,omitempty"`
+	VBMC          string `json:"vbmc,omitempty"`
+}
+
+func (w *Workspace) toolsPath() string { return filepath.Join(w.Root, "tools.json") }
+
+func (w *Workspace) LoadTools() Tools {
+	var t Tools
+	if b, err := os.ReadFile(w.toolsPath()); err == nil {
+		_ = json.Unmarshal(b, &t)
+	}
+	return t
+}
+
+func (w *Workspace) SaveTools(t Tools) error {
+	if t == w.LoadTools() {
+		return nil
+	}
+	b, err := json.MarshalIndent(t, "", "  ")
+	if err != nil {
+		return err
+	}
+	return w.WriteFile(w.toolsPath(), append(b, '\n'))
 }
