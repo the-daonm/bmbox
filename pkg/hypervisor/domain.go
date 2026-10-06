@@ -206,21 +206,48 @@ func (c *Client) DefineNode(s NodeSpec) (*DefineResult, error) {
 }
 
 func (c *Client) ownedBy(dom libvirt.Domain, lab, node string) (bool, error) {
+	l, n, err := c.nodeMeta(dom)
+	return err == nil && l == lab && n == node, err
+}
+
+// nodeMeta reads the lab/node a domain was created for; empty when the
+// domain carries no bmbox metadata.
+func (c *Client) nodeMeta(dom libvirt.Domain) (lab, node string, err error) {
 	md, err := c.l.DomainGetMetadata(dom, int32(libvirt.DomainMetadataElement), libvirt.OptString{MetadataNS}, libvirt.DomainAffectConfig)
-	if isErr(err, libvirt.ErrNoDomainMetadata) {
-		return false, nil
+	if isErr(err, libvirt.ErrNoDomainMetadata) || isErr(err, libvirt.ErrNoDomain) {
+		return "", "", nil
 	}
 	if err != nil {
-		return false, err
+		return "", "", err
 	}
 	var m struct {
 		Lab  string `xml:"lab,attr"`
 		Name string `xml:"name,attr"`
 	}
 	if err := xml.Unmarshal([]byte(md), &m); err != nil {
-		return false, nil
+		return "", "", nil
 	}
-	return m.Lab == lab && m.Name == node, nil
+	return m.Lab, m.Name, nil
+}
+
+// LabNodes finds every node of a lab that has a domain, by its ownership
+// metadata, so nodes no longer in the topology or state are found too.
+func (c *Client) LabNodes(lab string) ([]string, error) {
+	doms, _, err := c.l.ConnectListAllDomains(1, 0)
+	if err != nil {
+		return nil, fmt.Errorf("list domains: %w", err)
+	}
+	var nodes []string
+	for _, d := range doms {
+		l, n, err := c.nodeMeta(d)
+		if err != nil {
+			return nil, err
+		}
+		if l == lab && n != "" {
+			nodes = append(nodes, n)
+		}
+	}
+	return nodes, nil
 }
 
 func (c *Client) domainState(dom libvirt.Domain) (string, error) {

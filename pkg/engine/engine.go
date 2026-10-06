@@ -28,6 +28,9 @@ type Options struct {
 	// SushyEmulator / VBMC override where the BMC tools are found.
 	SushyEmulator string
 	VBMC          string
+	// Prune makes up remove resources of the lab that are no longer in the
+	// topology; without it they are only reported.
+	Prune bool
 }
 
 func SerialSocket(lab, node string) string {
@@ -80,6 +83,11 @@ func Up(ctx context.Context, t *topology.Topology, raw []byte, ws *workspace.Wor
 	if os.Geteuid() != 0 {
 		return nil, errors.New("bmbox up must run as root (bridges need CAP_NET_ADMIN): sudo bmbox up ...")
 	}
+	unlock, err := ws.Lock(lab)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	if err := ws.SaveTopology(lab, raw); err != nil {
 		return nil, fmt.Errorf("save topology: %w", err)
 	}
@@ -241,9 +249,18 @@ func Up(ctx context.Context, t *topology.Topology, raw []byte, ws *workspace.Wor
 	}
 
 	// 4. BMCs
-	if bmcs == nil {
-		return st, nil
+	if bmcs != nil {
+		if err := ensureBMCs(ctx, t, st, bmcs, fw.Loader, ws, opt, log); err != nil {
+			return st, err
+		}
 	}
+
+	// 5. Resources of this lab that are no longer in the topology
+	return st, reconcile(ctx, t, hv, bmcs, opt, log)
+}
+
+func ensureBMCs(ctx context.Context, t *topology.Topology, st *workspace.LabState, bmcs *bmc.Manager,
+	loader string, ws *workspace.Workspace, opt Options, log func(string, ...any)) error {
 	log("==> BMCs")
 	for i := range t.Spec.Nodes {
 		n := &t.Spec.Nodes[i]
@@ -251,10 +268,10 @@ func Up(ctx context.Context, t *topology.Topology, raw []byte, ws *workspace.Wor
 		if n.BMC == nil {
 			continue
 		}
-		spec := BMCSpec(t, n, ns.UUID, fw.Loader, opt.LibvirtURI, ws)
+		spec := BMCSpec(t, n, ns.UUID, loader, opt.LibvirtURI, ws)
 		res, err := bmcs.Ensure(ctx, spec, ws)
 		if err != nil {
-			return st, fmt.Errorf("node %s: %w", n.Name, err)
+			return fmt.Errorf("node %s: %w", n.Name, err)
 		}
 		ns.BMC = &workspace.BMCState{
 			Type: spec.Type, Address: spec.Address, Port: spec.Port,
@@ -266,7 +283,7 @@ func Up(ctx context.Context, t *topology.Topology, raw []byte, ws *workspace.Wor
 		}
 		log("    %-10s %-8s %-8s %s", n.Name, spec.Type, action, spec.Endpoint())
 	}
-	return st, nil
+	return nil
 }
 
 // preflightBMCs locates the BMC tools, connects to systemd and checks every

@@ -17,6 +17,7 @@ import (
 var (
 	sushyPath string
 	vbmcPath  string
+	prune     bool
 )
 
 var upCmd = &cobra.Command{
@@ -41,7 +42,7 @@ disks or NVRAM. Requires root.`,
 		defer stop()
 		st, err := engine.Up(ctx, t, raw, ws, engine.Options{
 			LibvirtURI: libvirtURI, Out: os.Stdout,
-			SushyEmulator: sushyPath, VBMC: vbmcPath,
+			SushyEmulator: sushyPath, VBMC: vbmcPath, Prune: prune,
 		})
 		if err != nil {
 			return err
@@ -55,5 +56,6 @@ disks or NVRAM. Requires root.`,
 func init() {
 	upCmd.Flags().StringVar(&sushyPath, "sushy-emulator", "", "path to sushy-emulator (default: $"+bmc.EnvSushyEmulator+" or PATH)")
 	upCmd.Flags().StringVar(&vbmcPath, "vbmc", "", "path to vbmc, used to find virtualbmc's python (default: $"+bmc.EnvVBMC+" or PATH)")
+	upCmd.Flags().BoolVar(&prune, "prune", false, "remove nodes, BMCs, disks and networks of this lab that are no longer in the topology")
 	rootCmd.AddCommand(upCmd)
 }

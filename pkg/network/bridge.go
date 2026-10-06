@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
@@ -179,6 +180,23 @@ func configureBridge(link netlink.Link, spec BridgeSpec, res *BridgeResult) erro
 		return fmt.Errorf("bring up %s: %w", spec.Name, err)
 	}
 	return nil
+}
+
+// LabBridges finds the bridges bmbox created for a lab, keyed by network
+// name, from their ownership alias.
+func LabBridges(lab string) (map[string]string, error) {
+	links, err := netlink.LinkList()
+	if err != nil {
+		return nil, fmt.Errorf("list links: %w", err)
+	}
+	prefix := OwnerAlias(lab + "/")
+	out := map[string]string{}
+	for _, l := range links {
+		if a := l.Attrs().Alias; l.Type() == "bridge" && strings.HasPrefix(a, prefix) {
+			out[strings.TrimPrefix(a, prefix)] = l.Attrs().Name
+		}
+	}
+	return out, nil
 }
 
 // ErrNotOwned is returned when a bridge exists but bmbox did not create it.
