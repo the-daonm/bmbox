@@ -222,10 +222,13 @@ func (t *Topology) validateNodes(v *validator) {
 			if b.Type != BMCRedfish && b.Type != BMCIPMI {
 				v.addf(path+".bmc.type", "unknown BMC type %q (want %q or %q)", b.Type, BMCRedfish, BMCIPMI)
 			}
-			if b.Type == BMCIPMI && b.Port == 0 {
-				v.addf(path+".bmc.port", "is required for IPMI")
+			if _, err := netip.ParseAddr(b.Address); err != nil {
+				v.addf(path+".bmc.address", "%q is not a valid IP address", b.Address)
 			}
-			if b.Port < 0 || b.Port > 65535 {
+			if b.Username == "" || strings.ContainsAny(b.Username, ": \t\n") {
+				v.addf(path+".bmc.username", "%q must be non-empty without ':' or whitespace", b.Username)
+			}
+			if b.Port < 1 || b.Port > 65535 {
 				v.addf(path+".bmc.port", "%d is not a valid port", b.Port)
 			}
 			if b.Port != 0 {

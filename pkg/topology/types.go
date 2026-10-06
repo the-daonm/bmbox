@@ -85,9 +85,14 @@ type NIC struct {
 	MAC string `yaml:"mac"`
 }
 
-// BMC describes the out-of-band controller emulated for the node.
+// BMC describes the out-of-band controller emulated for the node. Each node
+// gets its own endpoint, like the dedicated BMC of a physical server.
 type BMC struct {
-	Type     string `yaml:"type"` // redfish | ipmi
+	Type string `yaml:"type"` // redfish | ipmi
+	// Address the BMC listens on. Defaults to 127.0.0.1 so power control is
+	// not exposed on a shared host unless asked for.
+	Address string `yaml:"address"`
+	// Port is assigned from DefaultRedfishPort / DefaultIPMIPort when empty.
 	Port     int    `yaml:"port"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
