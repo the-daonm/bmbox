@@ -57,4 +57,16 @@ Node disks and NVRAM live in a libvirt `dir` storage pool
 (`/var/lib/libvirt/bmbox/<lab>` by default) so they are reachable by libvirtd
 even when it runs in a container.
 
+## Tests
+
+```bash
+go test ./...                         # unit tests
+# on a libvirt host, next to the bmbox binary and examples/topology.yaml:
+BMBOX_SUSHY_EMULATOR=~/venv/bin/sushy-emulator BMBOX_VBMC=~/venv/bin/vbmc scripts/e2e.sh
+```
+
+`scripts/e2e.sh` runs the whole lifecycle against real libvirt (up, Redfish
+and IPMI power control, console, convergence and prune, locking, destroy)
+and checks that nothing else on the host was touched.
+
 Demo walkthroughs: [week 3](docs/demo-week3.md), [week 4](docs/demo-week4.md).
