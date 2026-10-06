@@ -86,11 +86,12 @@ curl -s -u admin:password -H 'Content-Type: application/json' \
 
 ```bash
 sudo ./bmbox console node1
-# Connected to demo/node1 serial console. Detach with Ctrl-].
+# Connected to domain 'bmbox-demo-node1' (lab demo, node node1)
+# Escape character is ^] (Ctrl + ])
 # >>Start PXE over IPv4.
 ```
 
-Nhấn **Ctrl-]** để thoát. Khi gắn vào giữa chừng, `console` in lại 20 dòng gần nhất của lần boot hiện tại (`-n N` để đổi, `-n 0` để tắt), sau đó là dòng `--- live ---`. Có thể ghi log không tương tác:
+Nhấn **Ctrl-]** để thoát. Khi gắn vào giữa chừng, `console` in lại 20 dòng gần nhất của lần boot hiện tại (`-n N` để đổi, `-n 0` để tắt), sau đó là dòng `--- live ---`; phần in lại không xoá màn hình (các lệnh clear/di chuyển con trỏ của firmware bị lọc bỏ), phần live giữ nguyên như `virsh console`. Có thể ghi log không tương tác:
 `sudo timeout 30 ./bmbox console node1 < /dev/null > boot.log`.
 
 > **Console "đứng" không phải lỗi.** Node mới chưa có OS và trên `bmb-demo-pxe` chưa có DHCP/PXE server, nên firmware thử lần lượt từng cách boot mạng và **mỗi cách chờ ~60 giây** không in gì, cũng không đọc bàn phím:

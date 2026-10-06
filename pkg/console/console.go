@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"regexp"
 	"syscall"
 
 	"golang.org/x/term"
@@ -44,7 +45,7 @@ func Attach(socket, logPath string, tail int, in *os.File, out io.Writer) error 
 	}
 
 	if len(history) > 0 {
-		out.Write(history)
+		out.Write(stripScreenControl(history))
 		// Reset attributes the history may have left set, then mark where
 		// live output starts.
 		io.WriteString(out, "\x1b[0m\r\n--- live ---\r\n")
@@ -70,6 +71,17 @@ func Attach(socket, logPath string, tail int, in *os.File, out io.Writer) error 
 }
 
 var errDetached = errors.New("detached")
+
+// screenControl matches the CSI sequences firmware uses to repaint the
+// screen: clear (J/K), cursor moves (H/f/A-D/G/d), scroll regions (r) and
+// mode switches (h/l, e.g. ESC[=3h). Colours (m) are kept.
+var screenControl = regexp.MustCompile(`\x1b\[[=?]?[0-9;]*[HfJKABCDGdrhl]|\x1bc`)
+
+// stripScreenControl makes replayed history scroll like plain text instead
+// of wiping the user's terminal (the boot log starts with ESC[2J).
+func stripScreenControl(b []byte) []byte {
+	return screenControl.ReplaceAll(b, nil)
+}
 
 // tailLines returns the last n lines of a file (nothing if n <= 0 or the
 // file is missing). Only the end of the file is read.

@@ -33,3 +33,11 @@ func TestTailLines(t *testing.T) {
 		t.Error("expected no history")
 	}
 }
+
+func TestStripScreenControlKeepsText(t *testing.T) {
+	in := "\x1b[2J\x1b[01;01H\x1b[=3h\x1b[2J\x1b[01;01H\r\n>>Start PXE over IPv4.\r\n\x1b[1m\x1b[33mShell> \x1b[0m"
+	want := "\r\n>>Start PXE over IPv4.\r\n\x1b[1m\x1b[33mShell> \x1b[0m"
+	if got := string(stripScreenControl([]byte(in))); got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+}
