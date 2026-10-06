@@ -91,7 +91,7 @@ sudo ./bmbox console node1
 # >>Start PXE over IPv4.
 ```
 
-Nhấn **Ctrl-]** để thoát. Khi gắn vào giữa chừng, `console` in lại 20 dòng gần nhất của lần boot hiện tại (`-n N` để đổi, `-n 0` để tắt), sau đó là dòng `--- live ---`; phần in lại không xoá màn hình (các lệnh clear/di chuyển con trỏ của firmware bị lọc bỏ), phần live giữ nguyên như `virsh console`. Có thể ghi log không tương tác:
+Nhấn **Ctrl-]** để thoát. Khi gắn vào giữa chừng, `console` in lại 20 dòng gần nhất của lần boot hiện tại (`-n N` để đổi, `-n 0` để tắt), sau đó là dòng `--- live ---`; phần in lại không xoá màn hình: chỉ giữ chữ và màu, các lệnh di chuyển con trỏ được chuyển thành xuống dòng/khoảng trắng nên cả menu UEFI vẽ bằng toạ độ vẫn đọc được. Phần live giữ nguyên như `virsh console`. Khi node tắt nguồn, console báo `Console closed by node1: the node powered off.` Có thể ghi log không tương tác:
 `sudo timeout 30 ./bmbox console node1 < /dev/null > boot.log`.
 
 > **Console "đứng" không phải lỗi.** Node mới chưa có OS và trên `bmb-demo-pxe` chưa có DHCP/PXE server, nên firmware thử lần lượt từng cách boot mạng và **mỗi cách chờ ~60 giây** không in gì, cũng không đọc bàn phím:
