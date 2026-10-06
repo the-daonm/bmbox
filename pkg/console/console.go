@@ -3,6 +3,7 @@
 package console
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -17,8 +18,12 @@ import (
 const EscapeByte = 0x1d
 
 // Attach copies between the terminal and the serial socket until the user
-// presses Ctrl-] or the node powers off (QEMU closes the socket).
-func Attach(socket string, in *os.File, out io.Writer) error {
+// presses Ctrl-] or the node powers off (QEMU closes the socket). The last
+// tail lines of the boot log are shown first: the firmware can stay silent
+// for minutes (e.g. waiting for a DHCP offer), and without them a console
+// attached mid-boot looks frozen.
+func Attach(socket, logPath string, tail int, in *os.File, out io.Writer) error {
+	history := tailLines(logPath, tail)
 	conn, err := net.Dial("unix", socket)
 	switch {
 	case errors.Is(err, os.ErrNotExist), errors.Is(err, syscall.ECONNREFUSED):
@@ -36,6 +41,13 @@ func Attach(socket string, in *os.File, out io.Writer) error {
 			return err
 		}
 		defer term.Restore(int(in.Fd()), old)
+	}
+
+	if len(history) > 0 {
+		out.Write(history)
+		// Reset attributes the history may have left set, then mark where
+		// live output starts.
+		io.WriteString(out, "\x1b[0m\r\n--- live ---\r\n")
 	}
 
 	done := make(chan error, 2)
@@ -58,6 +70,36 @@ func Attach(socket string, in *os.File, out io.Writer) error {
 }
 
 var errDetached = errors.New("detached")
+
+// tailLines returns the last n lines of a file (nothing if n <= 0 or the
+// file is missing). Only the end of the file is read.
+func tailLines(path string, n int) []byte {
+	if n <= 0 || path == "" {
+		return nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	const window = 64 << 10
+	if fi, err := f.Stat(); err == nil && fi.Size() > window {
+		f.Seek(fi.Size()-window, io.SeekStart)
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil
+	}
+	data = bytes.TrimRight(data, "\r\n")
+	for i, cut := len(data)-1, 0; i >= 0; i-- {
+		if data[i] == '\n' {
+			if cut++; cut == n {
+				return data[i+1:]
+			}
+		}
+	}
+	return data
+}
 
 // copyUntilEscape forwards keystrokes and stops at the escape byte.
 func copyUntilEscape(dst io.Writer, src io.Reader) error {

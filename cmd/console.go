@@ -34,13 +34,16 @@ var consoleCmd = &cobra.Command{
 			return fmt.Errorf("no serial console at %s: is the node powered on? (%w)", sock, err)
 		}
 		fmt.Fprintf(os.Stderr, "Connected to %s/%s serial console. Detach with Ctrl-].\r\n", lab, args[0])
-		err = console.Attach(sock, os.Stdin, os.Stdout)
+		err = console.Attach(sock, engine.SerialLog(lab, args[0]), consoleTail, os.Stdin, os.Stdout)
 		fmt.Fprint(os.Stderr, "\r\nDetached.\r\n")
 		return err
 	},
 }
 
+var consoleTail int
+
 func init() {
+	consoleCmd.Flags().IntVarP(&consoleTail, "tail", "n", 20, "lines of the current boot to show before attaching (0 = none)")
 	addLabFlag(consoleCmd)
 	rootCmd.AddCommand(consoleCmd)
 }

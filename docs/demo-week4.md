@@ -90,8 +90,20 @@ sudo ./bmbox console node1
 # >>Start PXE over IPv4.
 ```
 
-Nhấn **Ctrl-]** để thoát. Có thể ghi log không tương tác:
+Nhấn **Ctrl-]** để thoát. Khi gắn vào giữa chừng, `console` in lại 20 dòng gần nhất của lần boot hiện tại (`-n N` để đổi, `-n 0` để tắt), sau đó là dòng `--- live ---`. Có thể ghi log không tương tác:
 `sudo timeout 30 ./bmbox console node1 < /dev/null > boot.log`.
+
+> **Console "đứng" không phải lỗi.** Node mới chưa có OS và trên `bmb-demo-pxe` chưa có DHCP/PXE server, nên firmware thử lần lượt từng cách boot mạng và **mỗi cách chờ ~60 giây** không in gì, cũng không đọc bàn phím:
+>
+> | Thời điểm | Firmware |
+> | --- | --- |
+> | 0–60 s | PXE over IPv4 → `PXE-E18: Server response timeout` |
+> | 60–125 s | PXE over IPv6 → `PXE-E16: No valid offer received` |
+> | 125–185 s | HTTP Boot over IPv4 → `Server response timeout` |
+> | 185–250 s | HTTP Boot over IPv6 → `Unexpected network error` |
+> | ~250 s | Đĩa trống → vào **UEFI Interactive Shell** (`Shell>`), gõ phím được |
+>
+> Server vật lý trống cũng cư xử y hệt. Chỉ NIC đầu tiên (mạng provisioning) được boot mạng, như server thật, nên node nhiều NIC không phải chờ thêm. Có DHCP/TFTP (dnsmasq hoặc Ironic) trên mạng `pxe` thì node sẽ PXE boot thật.
 
 Tắt nguồn lại:
 ```bash
