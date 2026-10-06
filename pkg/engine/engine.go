@@ -1,15 +1,17 @@
 // Package engine turns a validated topology into running infrastructure by
-// driving pkg/network and pkg/hypervisor, and records the result in the
-// workspace.
+// driving pkg/network, pkg/hypervisor and pkg/bmc, and records the result in
+// the workspace.
 package engine
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
+	"bmbox/pkg/bmc"
 	"bmbox/pkg/hypervisor"
 	"bmbox/pkg/network"
 	"bmbox/pkg/topology"
@@ -23,6 +25,9 @@ const SerialRoot = "/run/bmbox"
 type Options struct {
 	LibvirtURI string
 	Out        io.Writer
+	// SushyEmulator / VBMC override where the BMC tools are found.
+	SushyEmulator string
+	VBMC          string
 }
 
 func SerialSocket(lab, node string) string {
@@ -53,9 +58,22 @@ func NodeSpec(t *topology.Topology, n *topology.Node, fw hypervisor.Firmware, di
 	return spec
 }
 
-// Up brings the lab to the declared state: bridges exist and every node is
-// defined in libvirt (powered off). It is safe to run repeatedly.
-func Up(t *topology.Topology, raw []byte, ws *workspace.Workspace, opt Options) (st *workspace.LabState, err error) {
+// BMCSpec maps a node's topology BMC onto pkg/bmc inputs.
+func BMCSpec(t *topology.Topology, n *topology.Node, uuid, loader, libvirtURI string, ws *workspace.Workspace) bmc.Spec {
+	return bmc.Spec{
+		Lab: t.Metadata.Name, Node: n.Name, Domain: t.DomainName(n.Name), UUID: uuid,
+		Type: n.BMC.Type, Address: n.BMC.Address, Port: n.BMC.Port,
+		Username: n.BMC.Username, Password: n.BMC.Password,
+		LibvirtURI: libvirtURI, Loader: loader,
+		Unit: t.BMCUnit(n.Name),
+		Dir:  ws.BMCDir(t.Metadata.Name, n.Name),
+	}
+}
+
+// Up brings the lab to the declared state: bridges exist, every node is
+// defined in libvirt (powered off) and every BMC is serving. It is safe to
+// run repeatedly.
+func Up(ctx context.Context, t *topology.Topology, raw []byte, ws *workspace.Workspace, opt Options) (st *workspace.LabState, err error) {
 	lab := t.Metadata.Name
 	log := func(format string, args ...any) { fmt.Fprintf(opt.Out, format+"\n", args...) }
 
@@ -100,6 +118,13 @@ func Up(t *topology.Topology, raw []byte, ws *workspace.Workspace, opt Options) 
 		if _, err := network.CheckBridge(specs[i]); err != nil {
 			return st, fmt.Errorf("network %s: %w", n.Name, err)
 		}
+	}
+	bmcs, err := preflightBMCs(ctx, t, specs, opt)
+	if err != nil {
+		return st, err
+	}
+	if bmcs != nil {
+		defer bmcs.Close()
 	}
 	for i, n := range t.Spec.Networks {
 		res, err := network.EnsureBridge(specs[i])
@@ -209,7 +234,83 @@ func Up(t *topology.Topology, raw []byte, ws *workspace.Workspace, opt Options) 
 		}
 		log("    %-10s %-24s %-8s %s", n.Name, ns.Domain, ns.State, action)
 	}
+
+	// 4. BMCs
+	if bmcs == nil {
+		return st, nil
+	}
+	log("==> BMCs")
+	for i := range t.Spec.Nodes {
+		n := &t.Spec.Nodes[i]
+		ns := &st.Nodes[i]
+		if n.BMC == nil {
+			continue
+		}
+		spec := BMCSpec(t, n, ns.UUID, fw.Loader, opt.LibvirtURI, ws)
+		res, err := bmcs.Ensure(ctx, spec, ws)
+		if err != nil {
+			return st, fmt.Errorf("node %s: %w", n.Name, err)
+		}
+		ns.BMC = &workspace.BMCState{
+			Type: spec.Type, Address: spec.Address, Port: spec.Port,
+			Username: spec.Username, Unit: spec.Unit, Endpoint: spec.Endpoint(),
+		}
+		action := "running"
+		if res.Started {
+			action = "started"
+		}
+		log("    %-10s %-8s %-8s %s", n.Name, spec.Type, action, spec.Endpoint())
+	}
 	return st, nil
+}
+
+// preflightBMCs locates the BMC tools, connects to systemd and checks every
+// BMC port is free, before anything is created. It returns nil when the lab
+// has no BMCs.
+func preflightBMCs(ctx context.Context, t *topology.Topology, nets []network.BridgeSpec, opt Options) (*bmc.Manager, error) {
+	need := map[string]bool{}
+	for _, n := range t.Spec.Nodes {
+		if n.BMC != nil {
+			need[n.BMC.Type] = true
+		}
+	}
+	if len(need) == 0 {
+		return nil, nil
+	}
+	tools, err := bmc.FindTools(opt.SushyEmulator, opt.VBMC, need)
+	if err != nil {
+		return nil, err
+	}
+	m, err := bmc.NewManager(ctx, tools)
+	if err != nil {
+		return nil, err
+	}
+
+	// A BMC may listen on a lab gateway that only exists once its bridge
+	// is created.
+	gateways := map[string]bool{}
+	for _, s := range nets {
+		if s.Gateway.IsValid() {
+			gateways[s.Gateway.Addr().String()] = true
+		}
+	}
+	for _, n := range t.Spec.Nodes {
+		if n.BMC == nil || m.State(ctx, t.BMCUnit(n.Name)) == "active" {
+			continue // ours, from a previous up
+		}
+		err := bmc.CheckPort(n.BMC.Type, n.BMC.Address, n.BMC.Port)
+		if errors.Is(err, bmc.ErrAddrNotLocal) {
+			if gateways[n.BMC.Address] {
+				continue
+			}
+			err = fmt.Errorf("address %s is not configured on this host", n.BMC.Address)
+		}
+		if err != nil {
+			m.Close()
+			return nil, fmt.Errorf("node %s BMC: %w", n.Name, err)
+		}
+	}
+	return m, nil
 }
 
 func prevNetwork(ws *workspace.Workspace, lab, name string) *workspace.NetworkState {
