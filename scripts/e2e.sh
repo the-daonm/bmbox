@@ -1,24 +1,93 @@
 #!/usr/bin/env bash
 # End-to-end test of bmbox on a real libvirt host.
 #
-# Run from a directory holding the bmbox binary and a topology with a
-# Redfish node first and an IPMI node second (examples/topology.yaml):
+#   BMBOX=bin/bmbox scripts/e2e.sh
 #
-#   BMBOX_SUSHY_EMULATOR=~/venv/bin/sushy-emulator BMBOX_VBMC=~/venv/bin/vbmc \
-#     ./e2e.sh
+# The test brings up its own lab, "e2e" (two nodes: n1 with a Redfish BMC,
+# n2 with an IPMI BMC), on its own subnet and ports, so other labs on the
+# host are left alone and checked to stay that way. Needs sudo, virsh,
+# curl, ipmitool, flock and python3, plus sushy-tools and virtualbmc as for
+# `bmbox up` (BMBOX_SUSHY_EMULATOR / BMBOX_VBMC, or remembered paths).
 #
-# It destroys the lab named in the topology first, so do not point it at a
-# lab you want to keep. Needs sudo, curl, ipmitool and python3.
-set -u
+# Honoured: BMBOX (binary, default ./bmbox), BMBOX_HOME, LIBVIRT_DEFAULT_URI,
+# E2E_CIDR (default 172.30.90.0/24), E2E_REDFISH_PORT (8390),
+# E2E_IPMI_PORT (6390).
+set -u -o pipefail
 
 BMBOX=${BMBOX:-./bmbox}
-TOPO=${TOPO:-topology.yaml}
-LAB=$(awk '/^metadata:/{m=1} m && $1=="name:" {print $2; exit}' "$TOPO")
-NODE1=$(awk '/^  nodes:/{n=1} n && $1=="-" && $2=="name:" {print $3; exit}' "$TOPO")
-NODE2=$(awk '/^  nodes:/{n=1} n && $1=="-" && $2=="name:" {c++; if (c==2) {print $3; exit}}' "$TOPO")
-OUT=$(mktemp)
-SMALL=$(mktemp --suffix=.yaml)
-trap 'rm -f "$OUT" "$SMALL"' EXIT
+LAB=e2e
+CIDR=${E2E_CIDR:-172.30.90.0/24}
+REDFISH_PORT=${E2E_REDFISH_PORT:-8390}
+IPMI_PORT=${E2E_IPMI_PORT:-6390}
+URI=${LIBVIRT_DEFAULT_URI:-qemu:///system}
+WS=${BMBOX_HOME:-$HOME/.bmbox}
+STATE=$WS/labs/$LAB/state.json
+LOCK=$WS/labs/$LAB/.lock
+NS=https://bmbox.io/xmlns/libvirt/v1
+
+die() { echo "e2e: $*" >&2; exit 2; }
+
+# ---- preflight --------------------------------------------------------------
+[ -x "$BMBOX" ] || die "bmbox binary not found at $BMBOX (set BMBOX=path/to/bmbox)"
+BMBOX=$(cd "$(dirname "$BMBOX")" && pwd)/$(basename "$BMBOX")
+for tool in sudo virsh curl ipmitool flock python3 ip systemctl; do
+	command -v "$tool" >/dev/null || die "missing required tool: $tool"
+done
+sudo -n true 2>/dev/null || sudo true || die "sudo is required"
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+OUT=$TMP/out
+FULL=$TMP/full.yaml
+SMALL=$TMP/small.yaml
+
+cat >"$FULL" <<EOF
+apiVersion: bmbox.io/v1alpha1
+kind: Topology
+metadata:
+  name: $LAB
+spec:
+  networks:
+    - name: pxe
+      cidr: $CIDR
+    - name: data
+  nodes:
+    - name: n1
+      memory: 1GiB
+      disks: [{size: 40GiB}, {size: 2GiB}]
+      nics: [{network: pxe}, {network: data}]
+      bmc: {type: redfish, port: $REDFISH_PORT}
+    - name: n2
+      memory: 1GiB
+      nics: [{network: pxe}]
+      bmc: {type: ipmi, port: $IPMI_PORT}
+EOF
+# The same lab without n2, without the data network and without n1's 2nd disk.
+cat >"$SMALL" <<EOF
+apiVersion: bmbox.io/v1alpha1
+kind: Topology
+metadata:
+  name: $LAB
+spec:
+  networks:
+    - name: pxe
+      cidr: $CIDR
+  nodes:
+    - name: n1
+      memory: 1GiB
+      disks: [{size: 40GiB}]
+      nics: [{network: pxe}]
+      bmc: {type: redfish, port: $REDFISH_PORT}
+EOF
+
+# ---- helpers ----------------------------------------------------------------
+# bmbox and virsh always see the same workspace and libvirt.
+bm() {
+	sudo env BMBOX_HOME="$WS" LIBVIRT_DEFAULT_URI="$URI" \
+		BMBOX_SUSHY_EMULATOR="${BMBOX_SUSHY_EMULATOR:-}" BMBOX_VBMC="${BMBOX_VBMC:-}" \
+		"$BMBOX" "$@"
+}
+vsh() { sudo virsh -c "$URI" "$@"; }
 
 pass=0
 fail=0
@@ -35,18 +104,45 @@ check() {
 	fi
 }
 section() { printf '\n== %s\n' "$1"; }
+wait_for() { # seconds command...
+	local t=$1
+	shift
+	for _ in $(seq "$t"); do "$@" >/dev/null 2>&1 && return 0; sleep 1; done
+	return 1
+}
 
-bm() { sudo -E "$BMBOX" "$@"; }
-count_bmbox() {
-	echo $(($(sudo virsh list --all --name | grep -c "^bmbox-$LAB-") +
-		$(sudo virsh pool-list --all --name | grep -c "^bmbox-$LAB$") +
-		$(ip -o link show type bridge | grep -c "alias bmbox:$LAB/") +
-		$(systemctl list-units "bmbox-$LAB-*" --all --no-legend | wc -l)))
+# Lab ownership is read from bmbox's own marks, never from name prefixes:
+# lab "e2e" must not be confused with a lab called "e2e-x".
+lab_of_domain() { vsh metadata "$1" "$NS" 2>/dev/null | sed -n 's/.* lab="\([^"]*\)".*/\1/p'; }
+domains() { vsh list --all --name | awk 'NF {print $1}'; }
+e2e_domains() { for d in $(domains); do [ "$(lab_of_domain "$d")" = "$LAB" ] && echo "$d"; done; }
+other_domains() { for d in $(domains); do [ "$(lab_of_domain "$d")" != "$LAB" ] && echo "$d"; done | sort; }
+e2e_bridges() { ip -o link show type bridge | grep -F "alias bmbox:$LAB/" | awk -F': ' '{print $2}'; }
+other_bridges() { ip -o link show type bridge | grep -vF "alias bmbox:$LAB/" | awk -F': ' '{print $2}' | sort; }
+e2e_units() { systemctl list-units 'bmbox-*' --all --no-legend --plain | grep -F " for $LAB/" | awk '{print $1}'; }
+other_units() { systemctl list-units 'bmbox-*' --all --no-legend --plain | grep -vF " for $LAB/" | awk '{print $1, $3, $4}' | sort; }
+# virsh pads --name output with trailing spaces: trim before comparing.
+pools() { vsh pool-list --all --name | awk 'NF {print $1}'; }
+e2e_pool() { pools | grep -x "bmbox-$LAB"; }
+leftovers() { { e2e_domains; e2e_bridges; e2e_units; e2e_pool; } | grep -c .; }
+
+# Everything outside the e2e lab that bmbox could touch.
+host_snapshot() {
+	echo "## domains"; other_domains
+	echo "## pools"; pools | grep -vx "bmbox-$LAB" | sort
+	echo "## bridges"; other_bridges
+	echo "## bmbox units"; other_units
+	echo "## sysctls"
+	for k in net.ipv4.ip_forward net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables; do
+		echo "$k=$(sysctl -n "$k" 2>/dev/null)"
+	done
 }
-uuid_of() {
-	python3 -c "import json,sys; print([n['uuid'] for n in json.load(open(sys.argv[1]))['nodes'] if n['name']==sys.argv[2]][0])" \
-		"$HOME/.bmbox/labs/$LAB/state.json" "$1"
+
+state() { # python expression over the state document s
+	sudo cat "$STATE" | python3 -c "import json,sys; s=json.load(sys.stdin); print($1)"
 }
+node_state() { state "[n for n in s['nodes'] if n['name']=='$1'][0]$2"; }
+
 redfish() { curl -s -u admin:password "$@"; }
 power_state() { redfish "$RF/Systems/$UUID1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["PowerState"])'; }
 reset() {
@@ -54,112 +150,118 @@ reset() {
 		-X POST -d "{\"ResetType\":\"$1\"}" "$RF/Systems/$UUID1/Actions/ComputerSystem.Reset")" = 204 ]
 }
 ipmi() { ipmitool -I lanplus -H 127.0.0.1 -p "$IPMI_PORT" -U admin -P "${IPMI_PASS:-password}" "$@"; }
-wait_for() { # seconds command...
-	local t=$1
-	shift
-	for _ in $(seq "$t"); do "$@" && return 0; sleep 1; done
-	return 1
+is_power() { [ "$(power_state)" = "$1" ]; }
+
+console_to() { # file seconds: attach to n1 without input, keep the output
+	sudo timeout "$2" env BMBOX_HOME="$WS" "$BMBOX" console n1 --lab "$LAB" </dev/null >"$1" 2>&1
+	return 0
+}
+replay_is_clean() { # file: has a replay, and the replay (not live output) never clears
+	python3 - "$1" <<'PY'
+import sys
+data = open(sys.argv[1], "rb").read()
+replay, sep, _ = data.partition(b"--- live ---")
+sys.exit(0 if sep and b"\x1b[2J" not in replay and b"Start PXE" in replay else 1)
+PY
 }
 
-echo "bmbox e2e: lab=$LAB nodes=$NODE1,$NODE2 topology=$TOPO ($("$BMBOX" --version))"
-others_before=$(sudo virsh list --all --name | grep -v "^bmbox-$LAB-" | sort)
+lock_free() { flock -n "$LOCK" true; }
+
+# ---- run ----------------------------------------------------------------------
+echo "bmbox e2e: lab=$LAB workspace=$WS libvirt=$URI ($("$BMBOX" --version))"
 
 section "Clean start"
-bm destroy -f "$TOPO" >/dev/null 2>&1
-check "no resources of lab $LAB on the host" test "$(count_bmbox)" -eq 0
+bm destroy --lab "$LAB" >/dev/null 2>&1
+check "no resources of lab $LAB on the host" test "$(leftovers)" -eq 0
+host_snapshot >"$TMP/before"
 
 section "Topology"
-check "validate" "$BMBOX" validate -f "$TOPO"
-check "render $NODE1 is UEFI q35 with serial socket" \
-	sh -c "'$BMBOX' render $NODE1 -f '$TOPO' | grep -q 'type=\"pflash\"' && '$BMBOX' render $NODE1 -f '$TOPO' | grep -q 'serial type=\"unix\"'"
+check "validate" "$BMBOX" validate -f "$FULL"
+check "render n1 is UEFI q35 with a serial socket" \
+	bash -c "'$BMBOX' render n1 -f '$FULL' | grep -q 'type=\"pflash\"' && '$BMBOX' render n1 -f '$FULL' | grep -q 'serial type=\"unix\"'"
 
 section "up"
-check "up succeeds" bm up -f "$TOPO"
+check "up succeeds" bm up -f "$FULL"
 check "both domains defined and shut off" \
-	sh -c "[ \"\$(sudo virsh domstate bmbox-$LAB-$NODE1)\" = 'shut off' ] && [ \"\$(sudo virsh domstate bmbox-$LAB-$NODE2)\" = 'shut off' ]"
+	bash -c "[ \"\$(sudo virsh -c $URI domstate bmbox-$LAB-n1)\" = 'shut off' ] && [ \"\$(sudo virsh -c $URI domstate bmbox-$LAB-n2)\" = 'shut off' ]"
 check "disks are sparse (40 GiB disk allocates < 1 MiB)" \
-	sh -c "[ \$(sudo virsh vol-info --pool bmbox-$LAB $NODE1-disk0.qcow2 --bytes | awk '/Allocation/{print \$2}') -lt 1048576 ]"
+	bash -c "[ \$(sudo virsh -c $URI vol-info --pool bmbox-$LAB n1-disk0.qcow2 --bytes | awk '/Allocation/{print \$2}') -lt 1048576 ]"
 check "each node has its own NVRAM" \
-	sh -c "sudo virsh vol-list bmbox-$LAB | grep -q $NODE1-VARS.fd && sudo virsh vol-list bmbox-$LAB | grep -q $NODE2-VARS.fd"
-check "bridges carry the bmbox ownership alias" \
-	sh -c "ip -o link show type bridge | grep -q 'alias bmbox:$LAB/'"
-check "BMC units are active" \
-	sh -c "[ \$(systemctl list-units 'bmbox-$LAB-*-bmc.service' --state=active --no-legend | wc -l) -eq 2 ]"
-check "status lists both nodes" sh -c "sudo '$BMBOX' status -f '$TOPO' | grep -q '^$NODE2 '"
+	bash -c "sudo virsh -c $URI vol-list bmbox-$LAB | grep -q n1-VARS.fd && sudo virsh -c $URI vol-list bmbox-$LAB | grep -q n2-VARS.fd"
+check "both bridges carry the ownership alias" test "$(e2e_bridges | wc -l)" -eq 2
+check "both BMC units are active" \
+	bash -c "[ \$(systemctl list-units 'bmbox-$LAB-*-bmc.service' --state=active --no-legend | grep -cF ' for $LAB/') -eq 2 ]"
+bm status --lab "$LAB" >"$TMP/status" 2>&1
+check "status lists n1" grep -q '^n1 ' "$TMP/status"
+check "status lists n2" grep -q '^n2 ' "$TMP/status"
 
-UUID1=$(uuid_of "$NODE1")
-RF=$(python3 -c "import json,sys; n=[n for n in json.load(open(sys.argv[1]))['nodes'] if n['name']==sys.argv[2]][0]; print(n['bmc']['endpoint'].split('/Systems/')[0])" \
-	"$HOME/.bmbox/labs/$LAB/state.json" "$NODE1")
-IPMI_PORT=$(python3 -c "import json,sys; print([n['bmc']['port'] for n in json.load(open(sys.argv[1]))['nodes'] if n['name']==sys.argv[2]][0])" \
-	"$HOME/.bmbox/labs/$LAB/state.json" "$NODE2")
-
+UUID1=$(node_state n1 "['uuid']")
+RF=$(node_state n1 "['bmc']['endpoint'].split('/Systems/')[0]")
+[ -n "$UUID1" ] && [ -n "$RF" ] || die "could not read n1's UUID/BMC from $STATE"
 export RF UUID1 IPMI_PORT
-export -f redfish power_state ipmi
+export -f redfish power_state ipmi is_power
 
-section "Redfish ($NODE1)"
+section "Redfish (n1)"
 check "unauthenticated request is rejected (401)" \
-	sh -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' $RF/Systems/$UUID1)\" = 401 ]"
+	test "$(curl -s -o /dev/null -w '%{http_code}' "$RF/Systems/$UUID1")" = 401
 check "Systems collection holds only this node" \
-	sh -c "curl -s -u admin:password $RF/Systems | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d[\"Members@odata.count\"]==1, d'"
-check "PowerState is Off" bash -c '[ "$(power_state)" = Off ]'
+	bash -c "redfish \$RF/Systems | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d[\"Members@odata.count\"]==1, d'"
+check "PowerState is Off" is_power Off
 check "Reset On" reset On
-check "PowerState becomes On" wait_for 10 bash -c '[ "$(power_state)" = On ]'
+check "PowerState becomes On" wait_for 15 is_power On
 
-section "console ($NODE1)"
-check "console shows the firmware starting PXE" \
-	sh -c "sudo timeout 20 '$BMBOX' console $NODE1 -f '$TOPO' </dev/null 2>&1 | grep -q 'Start PXE over IPv4'"
-check "re-attach replays history without clearing the screen" \
-	bash -c "out=\$(sudo timeout 3 '$BMBOX' console $NODE1 -f '$TOPO' </dev/null 2>&1); grep -q -- '--- live ---' <<<\"\$out\" && ! grep -q \$'\\x1b\\[2J' <<<\"\$out\""
+section "console (n1)"
+console_to "$TMP/con1" 15
+check "console shows the firmware starting PXE" grep -q 'Start PXE over IPv4' "$TMP/con1"
+console_to "$TMP/con2" 3
+check "re-attach replays history without clearing the screen" replay_is_clean "$TMP/con2"
 check "Reset ForceOff" reset ForceOff
-check "PowerState becomes Off" wait_for 10 bash -c '[ "$(power_state)" = Off ]'
+check "PowerState becomes Off" wait_for 15 is_power Off
 check "console on a powered-off node prints the BMC power-on command" \
-	sh -c "sudo '$BMBOX' console $NODE1 -f '$TOPO' </dev/null 2>&1 | grep -q 'ResetType'"
+	bash -c "! sudo env BMBOX_HOME='$WS' '$BMBOX' console n1 --lab $LAB </dev/null >'$OUT.c' 2>&1 && grep -q 'ResetType' '$OUT.c'"
 
-section "IPMI ($NODE2)"
-check "power status off" bash -c 'ipmi power status | grep -q off'
+section "IPMI (n2)"
+check "power status off" bash -c 'ipmi power status | grep -q "is off"'
 check "set boot device PXE" ipmi chassis bootdev pxe
 check "power on" ipmi power on
-check "domain is running" wait_for 10 sh -c "[ \"\$(sudo virsh domstate bmbox-$LAB-$NODE2)\" = running ]"
+check "domain is running" wait_for 15 bash -c "[ \"\$(sudo virsh -c $URI domstate bmbox-$LAB-n2)\" = running ]"
 check "power off" ipmi power off
+check "domain is shut off" wait_for 15 bash -c "[ \"\$(sudo virsh -c $URI domstate bmbox-$LAB-n2)\" = 'shut off' ]"
 check "wrong password is rejected" bash -c '! IPMI_PASS=wrong ipmi power status'
 
 section "Convergence"
+bm up -f "$FULL" >"$TMP/up2" 2>&1
+check "second up succeeds" grep -q 'is up' "$TMP/up2"
 check "second up leaves running BMCs alone" \
-	sh -c "out=\$(sudo -E '$BMBOX' up -f '$TOPO'); echo \"\$out\" | grep -q 'redfish  running' && echo \"\$out\" | grep -q 'ipmi     running' && ! echo \"\$out\" | grep -q started"
-# Same lab without the second node and the second network.
-python3 - "$TOPO" "$SMALL" "$NODE2" <<'EOF'
-import sys, re
-src, dst, drop = sys.argv[1:]
-text = open(src).read()
-nodes = text.split("\n  nodes:\n", 1)
-blocks = re.split(r"(?m)^(?=    - name: )", nodes[1])
-keep = [b for b in blocks if not b.startswith("    - name: " + drop + "\n")]
-head = nodes[0]
-head = re.sub(r"(?ms)^    - name: data\b.*?(?=^    - name: |\Z)", "", head)
-body = "".join(keep)
-body = re.sub(r"(?m)^        - network: data\n", "", body)
-open(dst, "w").write(head + "\n  nodes:\n" + body)
-EOF
-check "up with a smaller topology reports orphans" \
-	sh -c "sudo -E '$BMBOX' up -f '$SMALL' | grep -q 'Not in topology any more'"
-check "orphans are kept without --prune" sudo virsh domstate "bmbox-$LAB-$NODE2"
-check "up --prune removes them" sudo -E "$BMBOX" up -f "$SMALL" --prune
-check "removed node is gone" sh -c "! sudo virsh domstate bmbox-$LAB-$NODE2"
-check "removed network bridge is gone" sh -c "! ip -o link show type bridge | grep -q 'alias bmbox:$LAB/data'"
-check "back to the full topology" sudo -E "$BMBOX" up -f "$TOPO"
+	bash -c "grep -q 'n1 *redfish *running' '$TMP/up2' && grep -q 'n2 *ipmi *running' '$TMP/up2' && ! grep -q started '$TMP/up2'"
+bm up -f "$SMALL" >"$TMP/up3" 2>&1
+check "smaller topology: orphans are reported" \
+	bash -c "grep -q 'node    n2' '$TMP/up3' && grep -q 'network data' '$TMP/up3' && grep -q 'volume  n1-disk1.qcow2' '$TMP/up3'"
+check "orphans are kept without --prune" vsh domstate "bmbox-$LAB-n2"
+check "up --prune succeeds" bm up -f "$SMALL" --prune
+check "removed node is gone" bash -c "! sudo virsh -c $URI domstate bmbox-$LAB-n2"
+check "removed BMC unit is gone" bash -c "! systemctl is-active --quiet bmbox-$LAB-n2-bmc.service"
+check "removed disk is gone" bash -c "! sudo virsh -c $URI vol-list bmbox-$LAB | grep -q n1-disk1.qcow2"
+check "removed network's bridge is gone" bash -c "! ip -o link show type bridge | grep -qF 'alias bmbox:$LAB/data'"
+check "back to the full topology" bm up -f "$FULL"
 
 section "Locking"
+# Hold the lab lock from this shell on fd 9 (no child process can keep it).
+exec 9>>"$LOCK"
+check "test holds the lab lock" flock -n 9
 check "a second command on the same lab is refused" \
-	sh -c "(flock '$HOME/.bmbox/labs/$LAB/.lock' sleep 4 &) ; sleep 0.5; sudo '$BMBOX' up -f '$TOPO' 2>&1 | grep -q 'already running'"
-sleep 4
+	bash -c "sudo env BMBOX_HOME='$WS' '$BMBOX' up -f '$FULL' 9>&- 2>&1 | grep -q 'already running'"
+exec 9>&-
+check "lock released" lock_free
 
 section "destroy"
-check "destroy succeeds" bm destroy -f "$TOPO"
-check "nothing of lab $LAB is left" test "$(count_bmbox)" -eq 0
-check "workspace of lab $LAB removed" test ! -e "$HOME/.bmbox/labs/$LAB"
-check "other domains on the host untouched" \
-	test "$others_before" = "$(sudo virsh list --all --name | grep -v "^bmbox-$LAB-" | sort)"
-check "destroy again is a no-op error, not a crash" sh -c "! sudo '$BMBOX' destroy --lab $LAB 2>&1 | grep -q panic"
+check "destroy succeeds" bm destroy --lab "$LAB"
+check "nothing of lab $LAB is left" test "$(leftovers)" -eq 0
+check "workspace of lab $LAB removed" test ! -e "$WS/labs/$LAB"
+host_snapshot >"$TMP/after"
+check "rest of the host unchanged (domains, pools, bridges, units, sysctls)" diff "$TMP/before" "$TMP/after"
+check "second destroy reports there is nothing to do" \
+	bash -c "! sudo env BMBOX_HOME='$WS' LIBVIRT_DEFAULT_URI='$URI' '$BMBOX' destroy --lab $LAB >'$OUT.d' 2>&1 && grep -q 'nothing found' '$OUT.d'"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
