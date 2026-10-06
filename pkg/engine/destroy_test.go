@@ -8,6 +8,19 @@ import (
 	"bmbox/pkg/workspace"
 )
 
+func TestMergePreviousKeepsHistoryOnFailure(t *testing.T) {
+	prev := &workspace.LabState{
+		Pool:     workspace.PoolState{Name: "bmbox-lab1"},
+		Networks: []workspace.NetworkState{{Name: "pxe", Created: true}},
+		Nodes:    []workspace.NodeState{{Name: "a"}, {Name: "b"}},
+	}
+	st := &workspace.LabState{Nodes: []workspace.NodeState{{Name: "a", UUID: "new"}}}
+	mergePrevious(st, prev)
+	if len(st.Networks) != 1 || !st.Networks[0].Created || len(st.Nodes) != 2 || st.Nodes[0].UUID != "new" || st.Pool.Name == "" {
+		t.Errorf("merged state = %+v", st)
+	}
+}
+
 func TestPlanDestroyMergesStateAndTopology(t *testing.T) {
 	topo, err := topology.Parse([]byte(`
 apiVersion: bmbox.io/v1alpha1

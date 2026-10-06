@@ -71,9 +71,7 @@ func planDestroy(lab string, t *topology.Topology, st *workspace.LabState) labPl
 		}
 		for _, n := range t.Spec.Networks {
 			if !seenNet[n.Name] {
-				// Not recorded as created: only removed if bmbox's alias
-				// proves it owns the bridge.
-				p.networks = append(p.networks, workspace.NetworkState{Name: n.Name, Bridge: n.Bridge, Created: true, External: n.External})
+				p.networks = append(p.networks, workspace.NetworkState{Name: n.Name, Bridge: n.Bridge, External: n.External})
 			}
 		}
 	}
@@ -150,8 +148,10 @@ func Destroy(ctx context.Context, lab string, t *topology.Topology, ws *workspac
 
 	log("==> Networks")
 	for _, n := range p.networks {
-		if n.External || !n.Created {
-			log("    %-10s kept %s (not created by bmbox)", n.Name, n.Bridge)
+		// The bridge alias, not the recorded "created" flag, proves bmbox
+		// owns a bridge: it is only ever set on bridges bmbox created.
+		if n.External {
+			log("    %-10s kept %s (external)", n.Name, n.Bridge)
 			continue
 		}
 		deleted, err := network.DeleteBridge(n.Bridge, lab+"/"+n.Name)

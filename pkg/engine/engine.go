@@ -85,12 +85,17 @@ func Up(ctx context.Context, t *topology.Topology, raw []byte, ws *workspace.Wor
 	}
 
 	st = &workspace.LabState{Lab: lab, Libvirt: opt.LibvirtURI}
-	if prev, _ := ws.LoadState(lab); prev != nil {
+	prev, _ := ws.LoadState(lab)
+	if prev != nil {
 		// Keep the original values of sysctls we changed on a previous run.
 		st.Sysctls = prev.Sysctls
 	}
 	// Persist whatever was created, even on failure, so destroy can clean up.
+	// A failed run must not forget what earlier runs created.
 	defer func() {
+		if err != nil {
+			mergePrevious(st, prev)
+		}
 		if serr := ws.SaveState(st); serr != nil && err == nil {
 			err = fmt.Errorf("save state: %w", serr)
 		}
@@ -311,6 +316,34 @@ func preflightBMCs(ctx context.Context, t *topology.Topology, nets []network.Bri
 		}
 	}
 	return m, nil
+}
+
+// mergePrevious adds the networks, nodes and pool of a previous state that a
+// failed run did not get to refresh.
+func mergePrevious(st, prev *workspace.LabState) {
+	if prev == nil {
+		return
+	}
+	hasNet, hasNode := map[string]bool{}, map[string]bool{}
+	for _, n := range st.Networks {
+		hasNet[n.Name] = true
+	}
+	for _, n := range st.Nodes {
+		hasNode[n.Name] = true
+	}
+	for _, n := range prev.Networks {
+		if !hasNet[n.Name] {
+			st.Networks = append(st.Networks, n)
+		}
+	}
+	for _, n := range prev.Nodes {
+		if !hasNode[n.Name] {
+			st.Nodes = append(st.Nodes, n)
+		}
+	}
+	if st.Pool.Name == "" {
+		st.Pool = prev.Pool
+	}
 }
 
 func prevNetwork(ws *workspace.Workspace, lab, name string) *workspace.NetworkState {
