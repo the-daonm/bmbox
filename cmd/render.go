@@ -10,9 +10,10 @@ import (
 )
 
 var renderCmd = &cobra.Command{
-	Use:   "render [node]",
-	Short: "Print the libvirt domain XML bmbox would define (offline, no changes)",
-	Args:  cobra.MaximumNArgs(1),
+	Use:               "render [node]",
+	Short:             "Print the libvirt domain XML bmbox would define (offline, no changes)",
+	Args:              cobra.MaximumNArgs(1),
+	ValidArgsFunction: completeNodes,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		t, _, err := loadTopology()
 		if err != nil {
