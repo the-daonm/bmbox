@@ -60,13 +60,17 @@ even when it runs in a container.
 ## Tests
 
 ```bash
-go test ./...                         # unit tests
-# on a libvirt host, next to the bmbox binary and examples/topology.yaml:
-BMBOX_SUSHY_EMULATOR=~/venv/bin/sushy-emulator BMBOX_VBMC=~/venv/bin/vbmc scripts/e2e.sh
+go test ./...                                  # unit tests
+go build -o bin/bmbox . && BMBOX=bin/bmbox scripts/e2e.sh   # on a libvirt host
 ```
 
-`scripts/e2e.sh` runs the whole lifecycle against real libvirt (up, Redfish
-and IPMI power control, console, convergence and prune, locking, destroy)
-and checks that nothing else on the host was touched.
+`scripts/e2e.sh` brings up its own lab (`e2e`, subnet 172.30.90.0/24,
+BMC ports 8390/6390) and runs the whole lifecycle against real libvirt: up,
+Redfish and IPMI power control, console, convergence and `--prune`,
+locking and destroy. It snapshots the rest of the host (domains, storage
+pools, bridges, bmbox units and the sysctls bmbox may change) before and
+after, and fails if anything outside its lab changed. It honours
+`BMBOX_HOME` and `LIBVIRT_DEFAULT_URI`; BMC tools are found as for
+`bmbox up`.
 
 Demo walkthroughs: [week 3](docs/demo-week3.md), [week 4](docs/demo-week4.md).
