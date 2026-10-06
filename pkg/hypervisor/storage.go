@@ -66,6 +66,12 @@ func (c *Client) EnsurePool(name, path string) (*Pool, error) {
 		return nil, err
 	}
 	if active == 0 {
+		// (Re)build first: the directory may be missing if an earlier run
+		// stopped between define and build, or someone removed it.
+		// Building a dir pool whose directory exists is a no-op.
+		if err := c.l.StoragePoolBuild(p, libvirt.StoragePoolBuildNew); err != nil {
+			return nil, fmt.Errorf("build storage pool %s: %w", name, err)
+		}
 		if err := c.l.StoragePoolCreate(p, 0); err != nil {
 			return nil, fmt.Errorf("start storage pool %s: %w", name, err)
 		}
