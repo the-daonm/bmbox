@@ -17,6 +17,9 @@ const (
 	DefaultDiskSize    = 20 * GiB
 	DefaultMTU         = 1500
 	DefaultStorageRoot = "/var/lib/libvirt/bmbox"
+	DefaultBMCAddress  = "127.0.0.1"
+	DefaultRedfishPort = 8300
+	DefaultIPMIPort    = 6330
 
 	// MaxIfNameLen is IFNAMSIZ-1 on Linux.
 	MaxIfNameLen = 15
@@ -107,6 +110,9 @@ func (t *Topology) ApplyDefaults() {
 			if n.BMC.Type == "" {
 				n.BMC.Type = BMCRedfish
 			}
+			if n.BMC.Address == "" {
+				n.BMC.Address = DefaultBMCAddress
+			}
 			if n.BMC.Username == "" {
 				n.BMC.Username = "admin"
 			}
@@ -115,6 +121,38 @@ func (t *Topology) ApplyDefaults() {
 			}
 		}
 	}
+	t.assignBMCPorts()
+}
+
+// assignBMCPorts gives every BMC without an explicit port the next free one
+// from its type's base, skipping ports claimed explicitly elsewhere.
+func (t *Topology) assignBMCPorts() {
+	used := map[int]bool{}
+	for _, n := range t.Spec.Nodes {
+		if n.BMC != nil && n.BMC.Port != 0 {
+			used[n.BMC.Port] = true
+		}
+	}
+	next := map[string]int{BMCRedfish: DefaultRedfishPort, BMCIPMI: DefaultIPMIPort}
+	for i := range t.Spec.Nodes {
+		b := t.Spec.Nodes[i].BMC
+		if b == nil || b.Port != 0 {
+			continue
+		}
+		p, ok := next[b.Type]
+		if !ok {
+			continue // unknown type, reported by Validate
+		}
+		for used[p] {
+			p++
+		}
+		b.Port, used[p], next[b.Type] = p, true, p+1
+	}
+}
+
+// BMCUnit is the systemd unit running a node's BMC.
+func (t *Topology) BMCUnit(node string) string {
+	return "bmbox-" + t.Metadata.Name + "-" + node + "-bmc.service"
 }
 
 // DomainName is the libvirt domain name of a node.

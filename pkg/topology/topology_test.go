@@ -91,7 +91,7 @@ spec:
         - network: pxe
           mac: 52:54:00:00:00:01
       boot: [network, cdrom]
-      bmc: {type: ipmi}
+      bmc: {type: ipmi, address: nope}
     - name: node1
       disks: []
       nics:
@@ -111,7 +111,7 @@ spec:
 		"below the minimum",
 		`unknown network "missing"`,
 		`unknown boot device "cdrom"`,
-		"is required for IPMI",
+		"is not a valid IP address",
 		"duplicate node",
 		"already used by",
 	}
@@ -166,5 +166,33 @@ func TestExampleTopologyIsValid(t *testing.T) {
 	}
 	if _, err := Load("../../examples/topology.yaml"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBMCPortsAutoAssigned(t *testing.T) {
+	doc := `
+apiVersion: bmbox.io/v1alpha1
+kind: Topology
+metadata: {name: lab1}
+spec:
+  networks: [{name: pxe}]
+  nodes:
+    - {name: a, nics: [{network: pxe}], bmc: {type: redfish}}
+    - {name: b, nics: [{network: pxe}], bmc: {type: redfish, port: 8301}}
+    - {name: c, nics: [{network: pxe}], bmc: {type: redfish}}
+    - {name: d, nics: [{network: pxe}], bmc: {type: ipmi}}
+`
+	topo, err := Parse([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{8300, 8301, 8302, 6330}
+	for i, n := range topo.Spec.Nodes {
+		if n.BMC.Port != want[i] {
+			t.Errorf("node %s port = %d, want %d", n.Name, n.BMC.Port, want[i])
+		}
+		if n.BMC.Address != DefaultBMCAddress {
+			t.Errorf("node %s address = %q", n.Name, n.BMC.Address)
+		}
 	}
 }
