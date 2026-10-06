@@ -169,7 +169,7 @@ sudo virsh destroy bmbox-demo-node2       # tắt lại
 
 ## 7. Dọn dẹp
 
-(`bmbox destroy` sẽ làm tự động ở tuần 4; tạm thời dọn tay.)
+> Từ tuần 4: chỉ cần `sudo ./bmbox destroy` (xem [demo-week4.md](demo-week4.md)). Các lệnh dọn tay dưới đây giữ lại để tham khảo.
 
 ```bash
 for n in node1 node2; do
