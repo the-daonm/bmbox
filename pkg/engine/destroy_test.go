@@ -21,7 +21,7 @@ func TestMergePreviousKeepsHistoryOnFailure(t *testing.T) {
 	}
 }
 
-func TestPlanDestroyMergesStateAndTopology(t *testing.T) {
+func TestPlanDestroyMergesStateTopologyAndHost(t *testing.T) {
 	topo, err := topology.Parse([]byte(`
 apiVersion: bmbox.io/v1alpha1
 kind: Topology
@@ -38,21 +38,45 @@ spec:
 	st := &workspace.LabState{
 		Lab:      "lab1",
 		Pool:     workspace.PoolState{Name: "bmbox-lab1", Path: "/p"},
-		Nodes:    []workspace.NodeState{{Name: "a", Disks: []string{"/p/a-disk0.qcow2"}, NVRAM: "/p/a-VARS.fd"}},
+		Nodes:    []workspace.NodeState{{Name: "a"}},
 		Networks: []workspace.NetworkState{{Name: "pxe", Bridge: "bmb-lab1-pxe", Created: true}},
 	}
-	p := planDestroy("lab1", topo, st)
-
-	if got := strings.Join(p.nodes, ","); got != "a,b" {
-		t.Errorf("nodes = %s", got)
+	host := discovered{
+		nodes:   []string{"old"}, // removed from topology, still defined
+		units:   map[string]string{"gone": "bmbox-lab1-gone-bmc.service"},
+		bridges: map[string]string{"stale": "bmb-lab1-stale"},
 	}
-	if got := strings.Join(p.volumes, ","); got != "a-disk0.qcow2,a-VARS.fd,b-disk0.qcow2,b-disk1.qcow2,b-VARS.fd" {
-		t.Errorf("volumes = %s", got)
+	p := planDestroy("lab1", topo, st, host)
+
+	if got := strings.Join(p.nodes, ","); got != "a,b,old,gone" {
+		t.Errorf("nodes = %s", got)
 	}
 	if p.pool.Path != "/p" {
 		t.Errorf("pool from state not preferred: %+v", p.pool)
 	}
-	if len(p.networks) != 2 || !p.networks[1].External {
-		t.Errorf("networks = %+v", p.networks)
+	var nets []string
+	for _, n := range p.networks {
+		nets = append(nets, n.Name+"="+n.Bridge)
+	}
+	if got := strings.Join(nets, ","); got != "pxe=bmb-lab1-pxe,ext=br-ext,stale=bmb-lab1-stale" {
+		t.Errorf("networks = %s", got)
+	}
+}
+
+func TestOwnsVolume(t *testing.T) {
+	owned := ownsVolume([]string{"node1", "n-2"})
+	for v, want := range map[string]bool{
+		"node1-disk0.qcow2":  true,
+		"node1-disk12.qcow2": true,
+		"node1-VARS.fd":      true,
+		"n-2-disk0.qcow2":    true,
+		"node1-diskX.qcow2":  false,
+		"node1-disk.qcow2":   false,
+		"node3-disk0.qcow2":  false,
+		"backup.qcow2":       false,
+	} {
+		if owned(v) != want {
+			t.Errorf("owned(%q) = %v, want %v", v, !want, want)
+		}
 	}
 }

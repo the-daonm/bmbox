@@ -145,6 +145,27 @@ func NewManager(ctx context.Context, tools Tools) (*Manager, error) {
 
 func (m *Manager) Close() { m.conn.Close() }
 
+// LabUnits finds the loaded BMC units of a lab, keyed by node. The node is
+// read from the unit description ("... for <lab>/<node>") because names are
+// ambiguous when lab names contain dashes.
+func (m *Manager) LabUnits(ctx context.Context, lab string) (map[string]string, error) {
+	units, err := m.conn.ListUnitsByPatternsContext(ctx, nil, []string{"bmbox-" + lab + "-*-bmc.service"})
+	if err != nil {
+		return nil, fmt.Errorf("list BMC units: %w", err)
+	}
+	out := map[string]string{}
+	for _, u := range units {
+		i := strings.LastIndex(u.Description, " for ")
+		if i < 0 {
+			continue
+		}
+		if l, node, ok := strings.Cut(u.Description[i+5:], "/"); ok && l == lab {
+			out[node] = u.Name
+		}
+	}
+	return out, nil
+}
+
 // State returns the unit's ActiveState ("active", "failed", "inactive"...).
 func (m *Manager) State(ctx context.Context, unit string) string {
 	p, err := m.conn.GetUnitPropertyContext(ctx, unit, "ActiveState")

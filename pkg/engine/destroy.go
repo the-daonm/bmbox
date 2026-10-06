@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"bmbox/pkg/bmc"
 	"bmbox/pkg/hypervisor"
@@ -14,71 +15,121 @@ import (
 	"bmbox/pkg/workspace"
 )
 
-// labPlan is what destroy removes: the union of the recorded state and the
-// topology, so a lab is still cleaned after a crash mid-`up`. Every step
-// re-checks ownership, so names derived from the topology are safe to try.
+// discovered is what is actually present on the host for a lab, found
+// through bmbox's ownership marks (domain metadata, bridge alias, unit
+// description) rather than names, so resources that dropped out of the
+// topology or state are still found.
+type discovered struct {
+	nodes   []string
+	units   map[string]string // node -> unit
+	bridges map[string]string // network -> bridge
+}
+
+func discover(ctx context.Context, lab string, hv *hypervisor.Client, m *bmc.Manager) (discovered, error) {
+	d := discovered{units: map[string]string{}, bridges: map[string]string{}}
+	var errs []error
+	if hv != nil {
+		nodes, err := hv.LabNodes(lab)
+		errs = append(errs, err)
+		d.nodes = nodes
+	}
+	if m != nil {
+		units, err := m.LabUnits(ctx, lab)
+		errs = append(errs, err)
+		if units != nil {
+			d.units = units
+		}
+	}
+	bridges, err := network.LabBridges(lab)
+	errs = append(errs, err)
+	if bridges != nil {
+		d.bridges = bridges
+	}
+	return d, errors.Join(errs...)
+}
+
+// labPlan is what destroy removes: the union of the recorded state, the
+// topology and what is discovered on the host. Every step re-checks
+// ownership, so names derived from the topology are safe to try.
 type labPlan struct {
 	lab      string
 	nodes    []string
-	volumes  []string
 	pool     workspace.PoolState
 	networks []workspace.NetworkState
 	sysctls  []workspace.SysctlState
 }
 
-func planDestroy(lab string, t *topology.Topology, st *workspace.LabState) labPlan {
+func planDestroy(lab string, t *topology.Topology, st *workspace.LabState, d discovered) labPlan {
 	p := labPlan{lab: lab}
 	names := &topology.Topology{Metadata: topology.Metadata{Name: lab}}
-	seenNode, seenVol, seenNet := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	seenNode, seenNet := map[string]bool{}, map[string]bool{}
 	addNode := func(n string) {
 		if !seenNode[n] {
 			seenNode[n] = true
 			p.nodes = append(p.nodes, n)
 		}
 	}
-	addVol := func(v string) {
-		if v != "" && !seenVol[v] {
-			seenVol[v] = true
-			p.volumes = append(p.volumes, v)
+	addNet := func(n workspace.NetworkState) {
+		if !seenNet[n.Name] {
+			seenNet[n.Name] = true
+			p.networks = append(p.networks, n)
 		}
 	}
 
 	if st != nil {
 		for _, n := range st.Nodes {
 			addNode(n.Name)
-			for _, d := range n.Disks {
-				addVol(filepath.Base(d))
-			}
-			addVol(filepath.Base(n.NVRAM))
+		}
+		for _, n := range st.Networks {
+			addNet(n)
 		}
 		p.pool = st.Pool
-		for _, n := range st.Networks {
-			seenNet[n.Name] = true
-			p.networks = append(p.networks, n)
-		}
 		p.sysctls = st.Sysctls
 	}
 	if t != nil {
 		for _, n := range t.Spec.Nodes {
 			addNode(n.Name)
-			for i := range n.Disks {
-				addVol(DiskVolumeName(n.Name, i))
-			}
-			addVol(NVRAMVolumeName(n.Name))
+		}
+		for _, n := range t.Spec.Networks {
+			addNet(workspace.NetworkState{Name: n.Name, Bridge: n.Bridge, External: n.External})
 		}
 		if p.pool.Name == "" {
 			p.pool = workspace.PoolState{Name: t.PoolName(), Path: t.Spec.Storage.Path}
 		}
-		for _, n := range t.Spec.Networks {
-			if !seenNet[n.Name] {
-				p.networks = append(p.networks, workspace.NetworkState{Name: n.Name, Bridge: n.Bridge, External: n.External})
-			}
-		}
+	}
+	for _, n := range d.nodes {
+		addNode(n)
+	}
+	for n := range d.units {
+		addNode(n)
+	}
+	for n, br := range d.bridges {
+		addNet(workspace.NetworkState{Name: n, Bridge: br})
 	}
 	if p.pool.Name == "" {
 		p.pool = workspace.PoolState{Name: names.PoolName(), Path: topology.DefaultStorageRoot + "/" + lab}
 	}
 	return p
+}
+
+// ownsVolume reports whether a pool volume follows bmbox's naming for one of
+// the given nodes (<node>-disk<N>.qcow2 or <node>-VARS.fd).
+func ownsVolume(nodes []string) func(string) bool {
+	return func(v string) bool {
+		for _, n := range nodes {
+			if v == NVRAMVolumeName(n) {
+				return true
+			}
+			rest, ok := strings.CutPrefix(v, n+"-disk")
+			if ok && strings.HasSuffix(rest, ".qcow2") {
+				idx := strings.TrimSuffix(rest, ".qcow2")
+				if idx != "" && strings.Trim(idx, "0123456789") == "" {
+					return true
+				}
+			}
+		}
+		return false
+	}
 }
 
 // Destroy removes everything `up` created for a lab, in reverse order:
@@ -89,14 +140,16 @@ func Destroy(ctx context.Context, lab string, t *topology.Topology, ws *workspac
 	if os.Geteuid() != 0 {
 		return errors.New("bmbox destroy must run as root: sudo bmbox destroy ...")
 	}
+	unlock, err := ws.Lock(lab)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	st, err := ws.LoadState(lab)
 	if err != nil {
 		return err
 	}
-	if st == nil && t == nil {
-		return fmt.Errorf("no state for lab %q in %s and no topology given", lab, ws.LabDir(lab))
-	}
-	p := planDestroy(lab, t, st)
 	names := &topology.Topology{Metadata: topology.Metadata{Name: lab}}
 	var errs []error
 	fail := func(err error) {
@@ -104,10 +157,34 @@ func Destroy(ctx context.Context, lab string, t *topology.Topology, ws *workspac
 		log("    error: %v", err)
 	}
 
-	log("==> BMCs")
-	if m, err := bmc.NewManager(ctx, bmc.Tools{}); err != nil {
+	m, err := bmc.NewManager(ctx, bmc.Tools{})
+	if err != nil {
 		fail(err)
+		m = nil
 	} else {
+		defer m.Close()
+	}
+	hv, err := hypervisor.Connect(opt.LibvirtURI)
+	if err != nil {
+		fail(err)
+		hv = nil
+	} else {
+		defer hv.Close()
+	}
+	d, err := discover(ctx, lab, hv, m)
+	if err != nil {
+		fail(err)
+	}
+	if st == nil && t == nil && len(d.nodes) == 0 && len(d.units) == 0 && len(d.bridges) == 0 {
+		if st == nil {
+			_ = ws.RemoveLab(lab) // only the lock we just created
+		}
+		return fmt.Errorf("nothing found for lab %q (no state in %s, no topology, nothing on the host)", lab, ws.LabDir(lab))
+	}
+	p := planDestroy(lab, t, st, d)
+
+	log("==> BMCs")
+	if m != nil {
 		for _, n := range p.nodes {
 			unit := names.BMCUnit(n)
 			if s := m.State(ctx, unit); s == "inactive" || s == "unknown" {
@@ -119,14 +196,10 @@ func Destroy(ctx context.Context, lab string, t *topology.Topology, ws *workspac
 			}
 			log("    %-10s stopped %s", n, unit)
 		}
-		m.Close()
 	}
 
 	log("==> Nodes and storage")
-	hv, err := hypervisor.Connect(opt.LibvirtURI)
-	if err != nil {
-		fail(err)
-	} else {
+	if hv != nil {
 		for _, n := range p.nodes {
 			deleted, err := hv.DeleteNode(lab, n, names.DomainName(n))
 			if err != nil {
@@ -137,13 +210,12 @@ func Destroy(ctx context.Context, lab string, t *topology.Topology, ws *workspac
 				log("    %-10s undefined %s", n, names.DomainName(n))
 			}
 		}
-		deleted, err := hv.DeletePool(p.pool.Name, p.pool.Path, p.volumes)
+		deleted, err := hv.DeletePool(p.pool.Name, p.pool.Path, ownsVolume(p.nodes))
 		if err != nil {
 			fail(err)
 		} else if deleted {
 			log("    pool       deleted %s (%s)", p.pool.Name, p.pool.Path)
 		}
-		hv.Close()
 	}
 
 	log("==> Networks")

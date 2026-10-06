@@ -51,9 +51,57 @@ func (c *Client) DeleteNode(lab, node, domainName string) (deleted bool, err err
 	return true, nil
 }
 
-// DeletePool removes the given volumes, then the pool and its directory.
-// The pool is kept if it holds files bmbox did not create.
-func (c *Client) DeletePool(name, path string, volumes []string) (deleted bool, err error) {
+// PoolVolumes lists the volume names in a pool (none if it does not exist).
+func (c *Client) PoolVolumes(pool string) ([]string, error) {
+	p, err := c.l.StoragePoolLookupByName(pool)
+	if isErr(err, libvirt.ErrNoStoragePool) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if active, err := c.l.StoragePoolIsActive(p); err != nil || active == 0 {
+		return nil, err
+	}
+	_ = c.l.StoragePoolRefresh(p, 0)
+	vols, _, err := c.l.StoragePoolListAllVolumes(p, 1, 0)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, v := range vols {
+		names = append(names, v.Name)
+	}
+	return names, nil
+}
+
+// DeleteVolumes removes volumes from a pool; missing ones are skipped.
+func (c *Client) DeleteVolumes(pool string, names []string) error {
+	p, err := c.l.StoragePoolLookupByName(pool)
+	if isErr(err, libvirt.ErrNoStoragePool) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, v := range names {
+		vol, err := c.l.StorageVolLookupByName(p, v)
+		if isErr(err, libvirt.ErrNoStorageVol) {
+			continue // e.g. NVRAM already removed with the domain
+		}
+		if err != nil {
+			return err
+		}
+		if err := c.l.StorageVolDelete(vol, 0); err != nil {
+			return fmt.Errorf("delete volume %s: %w", v, err)
+		}
+	}
+	return nil
+}
+
+// DeletePool removes the volumes owned() accepts, then the pool and its
+// directory. The pool is kept if it still holds files bmbox did not create.
+func (c *Client) DeletePool(name, path string, owned func(volume string) bool) (deleted bool, err error) {
 	p, err := c.l.StoragePoolLookupByName(name)
 	if isErr(err, libvirt.ErrNoStoragePool) {
 		return false, nil
@@ -84,17 +132,18 @@ func (c *Client) DeletePool(name, path string, volumes []string) (deleted bool, 
 	}
 	_ = c.l.StoragePoolRefresh(p, 0)
 
-	for _, v := range volumes {
-		vol, err := c.l.StorageVolLookupByName(p, v)
-		if isErr(err, libvirt.ErrNoStorageVol) {
-			continue // e.g. NVRAM already removed with the domain
+	vols, err := c.PoolVolumes(name)
+	if err != nil {
+		return false, err
+	}
+	var mine []string
+	for _, v := range vols {
+		if owned(v) {
+			mine = append(mine, v)
 		}
-		if err != nil {
-			return false, err
-		}
-		if err := c.l.StorageVolDelete(vol, 0); err != nil {
-			return false, fmt.Errorf("delete volume %s: %w", v, err)
-		}
+	}
+	if err := c.DeleteVolumes(name, mine); err != nil {
+		return false, err
 	}
 
 	left, _, err := c.l.StoragePoolListAllVolumes(p, 1, 0)
