@@ -38,6 +38,9 @@ type NodeSpec struct {
 	NVRAM        string
 	VarsTemplate string
 	SerialSocket string
+	// SerialLog receives a copy of all serial output, so a console that
+	// attaches mid-boot can show what came before.
+	SerialLog string
 }
 
 // BuildDomainXML renders a q35 + OVMF machine that behaves like a server
@@ -46,14 +49,17 @@ type NodeSpec struct {
 func BuildDomainXML(s NodeSpec) (string, error) {
 	port0 := uint(0)
 
-	// Boot order is per device (not <os><boot dev>) so UEFI and the future
-	// BMC can reorder network vs disk without regenerating the domain.
+	// Boot order is per device (not <os><boot dev>) so UEFI and the BMC
+	// can reorder network vs disk without regenerating the domain. Like a
+	// physical server, only the first NIC (the provisioning network)
+	// network-boots: every extra NIC would add minutes of PXE/HTTP boot
+	// timeouts when no provisioning server answers.
 	var order uint
 	bootOf := map[string][]*libvirtxml.DomainDeviceBoot{}
 	for _, dev := range s.Boot {
 		n := len(s.Disks)
 		if dev == "network" {
-			n = len(s.NICs)
+			n = min(len(s.NICs), 1)
 		}
 		for i := 0; i < n; i++ {
 			order++
@@ -125,6 +131,7 @@ func BuildDomainXML(s NodeSpec) (string, error) {
 			Interfaces: nics,
 			Serials: []libvirtxml.DomainSerial{{
 				Source: serialSrc,
+				Log:    serialLog(s.SerialLog),
 				Target: &libvirtxml.DomainSerialTarget{Type: "isa-serial", Port: &port0},
 			}},
 			Consoles: []libvirtxml.DomainConsole{{
@@ -145,6 +152,14 @@ func BuildDomainXML(s NodeSpec) (string, error) {
 		},
 	}
 	return dom.Marshal()
+}
+
+func serialLog(path string) *libvirtxml.DomainChardevLog {
+	if path == "" {
+		return nil
+	}
+	// Truncated at every power-on, so it holds the current boot only.
+	return &libvirtxml.DomainChardevLog{File: path}
 }
 
 // DefineResult reports what DefineNode did.
