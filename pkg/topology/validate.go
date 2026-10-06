@@ -113,6 +113,8 @@ func (t *Topology) validateNetworks(v *validator) {
 		names[n.Name] = true
 
 		switch {
+		case n.Bridge == "" && n.External:
+			v.addf(path+".bridge", "is required for an external network (name the existing bridge)")
 		case n.Bridge == "":
 			v.addf(path+".bridge", "is required")
 		case len(n.Bridge) > MaxIfNameLen:

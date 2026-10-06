@@ -196,3 +196,18 @@ spec:
 		}
 	}
 }
+
+func TestExternalNetworkNeedsBridge(t *testing.T) {
+	doc := `
+apiVersion: bmbox.io/v1alpha1
+kind: Topology
+metadata: {name: lab1}
+spec:
+  networks: [{name: prov, external: true}]
+  nodes: [{name: a, nics: [{network: prov}]}]
+`
+	_, err := Parse([]byte(doc))
+	if err == nil || !strings.Contains(err.Error(), "required for an external network") {
+		t.Fatalf("expected external bridge error, got %v", err)
+	}
+}
