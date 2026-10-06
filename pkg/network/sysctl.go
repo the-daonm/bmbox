@@ -1,6 +1,7 @@
 package network
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,14 +49,19 @@ func EnsureSysctl(key, want string) (*SysctlChange, error) {
 	return &SysctlChange{Key: key, Old: old, New: want}, nil
 }
 
-// RestoreSysctl undoes a change. Missing keys (e.g. the per-interface tree of
-// a bridge that was already deleted) are ignored.
-func RestoreSysctl(c SysctlChange) error {
-	if _, err := os.Stat(sysctlPath(c.Key)); os.IsNotExist(err) {
-		return nil
+// RestoreSysctl undoes a change, but only while the value is still the one
+// bmbox set: if someone changed it since, theirs wins. Missing keys (e.g. the
+// per-interface tree of a deleted bridge) are ignored.
+func RestoreSysctl(c SysctlChange) (restored bool, err error) {
+	cur, err := ReadSysctl(c.Key)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
 	}
-	_, err := EnsureSysctl(c.Key, c.Old)
-	return err
+	if err != nil || cur != c.New {
+		return false, err
+	}
+	changed, err := EnsureSysctl(c.Key, c.Old)
+	return changed != nil, err
 }
 
 // EnsureHostSysctls applies host-wide settings the lab needs. Values are only
