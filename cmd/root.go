@@ -16,6 +16,7 @@ var version = "dev"
 var (
 	topologyFile string
 	libvirtURI   string
+	labFlag      string
 )
 
 var rootCmd = &cobra.Command{
@@ -44,6 +45,25 @@ func init() {
 	}
 	rootCmd.PersistentFlags().StringVarP(&topologyFile, "file", "f", "topology.yaml", "topology file")
 	rootCmd.PersistentFlags().StringVarP(&libvirtURI, "connect", "c", defURI, "libvirt connection URI")
+}
+
+// resolveLab returns the lab to act on: --lab, else the topology file's name.
+// The topology is returned too when it could be loaded.
+func resolveLab() (string, *topology.Topology, error) {
+	t, _, err := loadTopology()
+	switch {
+	case labFlag != "" && (t == nil || t.Metadata.Name != labFlag):
+		return labFlag, nil, nil
+	case labFlag != "":
+		return labFlag, t, nil
+	case err != nil:
+		return "", nil, fmt.Errorf("%w (or pass --lab NAME)", err)
+	}
+	return t.Metadata.Name, t, nil
+}
+
+func addLabFlag(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&labFlag, "lab", "", "lab name (default: metadata.name of the topology file)")
 }
 
 // loadTopology returns the parsed topology together with the raw bytes that
