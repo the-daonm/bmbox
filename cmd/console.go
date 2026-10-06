@@ -36,9 +36,11 @@ var consoleCmd = &cobra.Command{
 			return fmt.Errorf("node %s is powered off (no serial console at %s). Power it on through its BMC:\n  %s",
 				args[0], sock, powerOnHint(lab, args[0]))
 		}
-		fmt.Fprintf(os.Stderr, "Connected to %s/%s serial console. Detach with Ctrl-].\r\n", lab, args[0])
+		// Same banner and exit behaviour as `virsh console`.
+		fmt.Fprintf(os.Stderr, "Connected to domain '%s' (lab %s, node %s)\r\nEscape character is ^] (Ctrl + ])\r\n",
+			"bmbox-"+lab+"-"+args[0], lab, args[0])
 		err = console.Attach(sock, engine.SerialLog(lab, args[0]), consoleTail, os.Stdin, os.Stdout)
-		fmt.Fprint(os.Stderr, "\r\nDetached.\r\n")
+		fmt.Fprint(os.Stderr, "\r\n")
 		return err
 	},
 }
