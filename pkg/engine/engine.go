@@ -37,6 +37,11 @@ func SerialSocket(lab, node string) string {
 	return filepath.Join(SerialRoot, lab, node+".serial.sock")
 }
 
+// SerialLog holds the serial output of the node's current boot.
+func SerialLog(lab, node string) string {
+	return filepath.Join(SerialRoot, lab, node+".serial.log")
+}
+
 func DiskVolumeName(node string, i int) string { return fmt.Sprintf("%s-disk%d.qcow2", node, i) }
 func NVRAMVolumeName(node string) string       { return node + "-VARS.fd" }
 
@@ -54,6 +59,7 @@ func NodeSpec(t *topology.Topology, n *topology.Node, fw hypervisor.Firmware, di
 		NVRAM:        nvram,
 		VarsTemplate: fw.VarsTemplate,
 		SerialSocket: SerialSocket(t.Metadata.Name, n.Name),
+		SerialLog:    SerialLog(t.Metadata.Name, n.Name),
 	}
 	for _, nic := range n.NICs {
 		spec.NICs = append(spec.NICs, hypervisor.NICSpec{MAC: nic.MAC, Bridge: t.Network(nic.Network).Bridge})

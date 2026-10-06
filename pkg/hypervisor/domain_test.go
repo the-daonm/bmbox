@@ -17,6 +17,7 @@ func TestBuildDomainXML(t *testing.T) {
 		NVRAM:        "/p/n1-VARS.fd",
 		VarsTemplate: "/fw/VARS.fd",
 		SerialSocket: "/run/bmbox/lab1/n1.serial.sock",
+		SerialLog:    "/run/bmbox/lab1/n1.serial.log",
 	}
 	raw, err := BuildDomainXML(spec)
 	if err != nil {
@@ -34,11 +35,17 @@ func TestBuildDomainXML(t *testing.T) {
 		t.Errorf("nvram = %+v", d.OS.NVRam)
 	}
 
-	// network devices boot first, then disks, in device order
-	want := map[string]uint{"nic0": 1, "nic1": 2, "disk0": 3, "disk1": 4}
+	// the first NIC network-boots, then disks in device order; the second
+	// NIC does not boot
+	want := map[string]uint{"nic0": 1, "disk0": 2, "disk1": 3}
 	got := map[string]uint{}
 	for i, n := range d.Devices.Interfaces {
-		got["nic"+string(rune('0'+i))] = n.Boot.Order
+		if n.Boot != nil {
+			got["nic"+string(rune('0'+i))] = n.Boot.Order
+		}
+	}
+	if d.Devices.Interfaces[1].Boot != nil {
+		t.Error("second NIC must not be in the boot order")
 	}
 	for i, dk := range d.Devices.Disks {
 		got["disk"+string(rune('0'+i))] = dk.Boot.Order
@@ -52,6 +59,9 @@ func TestBuildDomainXML(t *testing.T) {
 	s := d.Devices.Serials[0]
 	if s.Source.UNIX == nil || s.Source.UNIX.Path != spec.SerialSocket || s.Source.UNIX.Mode != "bind" {
 		t.Errorf("serial = %+v", s.Source)
+	}
+	if s.Log == nil || s.Log.File != spec.SerialLog {
+		t.Errorf("serial log = %+v", s.Log)
 	}
 	if d.Metadata == nil || d.Metadata.XML == "" {
 		t.Error("ownership metadata missing")
