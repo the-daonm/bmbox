@@ -17,7 +17,8 @@ scp examples/topology.yaml htc@lab22:bmbox-test/topology.yaml
 # lab22
 ssh htc@lab22
 cd ~/bmbox-test
-# sudo xoá PATH, nên chỉ đường cho bmbox tới sushy-tools/virtualbmc trong venv:
+# sudo xoá PATH, nên chỉ đường cho bmbox tới sushy-tools/virtualbmc trong venv.
+# Chỉ cần ở lần up đầu tiên: bmbox nhớ đường dẫn trong ~/.bmbox/tools.json.
 export BMC_TOOLS="BMBOX_SUSHY_EMULATOR=$HOME/venv/bin/sushy-emulator BMBOX_VBMC=$HOME/venv/bin/vbmc"
 ```
 
@@ -110,12 +111,28 @@ $I power off
 ipmitool -I lanplus -H 127.0.0.1 -p 6231 -U admin -P wrong power status   # bị từ chối
 ```
 
-## 6. Idempotent
+## 6. Idempotent và đổi topology
 
 ```bash
-sudo env $BMC_TOOLS ./bmbox up | sed -n '/BMCs/,$p'
+sudo ./bmbox up | sed -n '/BMCs/,$p'
 # node1 redfish running ...   <- BMC đang chạy, cấu hình không đổi: không restart
 ```
+
+Xoá `node2` và network `data` khỏi topology rồi chạy lại `up`: bmbox **phát hiện** tài nguyên thừa (qua dấu sở hữu: metadata domain, alias bridge, mô tả unit) và chỉ báo, không tự xoá:
+
+```
+==> Not in topology any more (kept; run 'bmbox up --prune' to remove)
+    node    node2 (bmbox-demo-node2)
+    bmc     node2 (bmbox-demo-node2-bmc.service)
+    volume  node2-VARS.fd
+    volume  node2-disk0.qcow2
+    network data (bmb-demo-data)
+```
+
+`sudo ./bmbox up --prune` xoá chúng. `sudo ./bmbox list` liệt kê các lab trong workspace.
+
+Hai lệnh cùng lúc trên một lab bị chặn bằng khoá:
+`Error: another bmbox command is already running for lab "demo"`.
 
 ## 7. `bmbox destroy`
 
@@ -146,7 +163,7 @@ sudo virsh domstate virtual-baremetal-01                # VM tuần 2 vẫn còn
 pgrep -af 'sushy-emulator|vbmcd'                         # BMC tuần 2 vẫn chạy
 ```
 
-`destroy` có thể chạy lại nhiều lần, chạy được từ bất kỳ thư mục nào với `--lab demo`, và vẫn dọn được khi `up` bị lỗi giữa chừng (gộp `state.json` với topology).
+`destroy` có thể chạy lại nhiều lần, chạy được từ bất kỳ thư mục nào với `--lab demo`, và vẫn dọn sạch khi `up` lỗi giữa chừng hoặc topology đã bị sửa: nó gộp `state.json`, topology và **những gì tìm thấy trên host** qua dấu sở hữu.
 
 ---
 

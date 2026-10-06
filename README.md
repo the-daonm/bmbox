@@ -19,7 +19,9 @@ go build -o bin/bmbox .
 bmbox validate -f examples/topology.yaml   # parse + validate
 bmbox render node1 -f examples/topology.yaml   # print domain XML (offline)
 sudo bmbox up -f examples/topology.yaml    # bridges, disks, NVRAM, domains (SHUTOFF), BMCs
+sudo bmbox up --prune                      # also remove what was dropped from the topology
 sudo bmbox status                          # power state + BMC endpoints
+bmbox list                                 # labs in the workspace
 sudo bmbox console node1                   # serial console (Ctrl-] to detach)
 sudo bmbox destroy                         # remove everything up created
 ```
@@ -29,6 +31,8 @@ and/or [virtualbmc](https://opendev.org/openstack/virtualbmc) (IPMI). sudo
 resets `PATH`, so point bmbox at them with `BMBOX_SUSHY_EMULATOR` /
 `BMBOX_VBMC` (or `--sushy-emulator` / `--vbmc`), e.g.
 `sudo BMBOX_SUSHY_EMULATOR=~/venv/bin/sushy-emulator BMBOX_VBMC=~/venv/bin/vbmc bmbox up`.
+The paths are remembered in `~/.bmbox/tools.json`, so later runs need no
+variables.
 
 Flags: `-f/--file` topology file (default `topology.yaml`), `-c/--connect`
 libvirt URI (default `$LIBVIRT_DEFAULT_URI` or `qemu:///system`).
@@ -38,13 +42,13 @@ invoking user, also under sudo).
 ## Layout
 
 ```
-cmd/            Cobra commands (validate, render, up, status, console, destroy)
+cmd/            Cobra commands (validate, render, up, status, list, console, destroy)
 pkg/topology    topology.yaml schema, defaults, validation
 pkg/network     Linux bridges via rtnetlink, sysctl handling
 pkg/hypervisor  libvirt RPC client: firmware discovery, storage pool, domain XML
 pkg/bmc         per-node Redfish/IPMI BMCs as systemd transient units (D-Bus)
 pkg/console     terminal <-> serial UNIX socket
-pkg/engine      orchestrates up, destroy and status
+pkg/engine      orchestrates up (incl. orphan detection/prune), destroy and status
 pkg/workspace   ~/.bmbox state (topology snapshot, state.json, domain XML)
 examples/       sample topology
 ```
