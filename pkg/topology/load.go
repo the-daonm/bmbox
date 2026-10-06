@@ -74,7 +74,7 @@ func (t *Topology) ApplyDefaults() {
 
 	for i := range t.Spec.Networks {
 		n := &t.Spec.Networks[i]
-		if n.Bridge == "" && n.Name != "" {
+		if n.Bridge == "" && n.Name != "" && !n.External {
 			n.Bridge = defaultBridgeName(t.Metadata.Name, n.Name)
 		}
 		if n.MTU == 0 {
