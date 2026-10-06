@@ -59,6 +59,31 @@ func Open() (*Workspace, error) {
 
 func (w *Workspace) LabDir(lab string) string { return filepath.Join(w.Root, "labs", lab) }
 
+// BMCDir holds a node's generated BMC config and credentials.
+func (w *Workspace) BMCDir(lab, node string) string {
+	return filepath.Join(w.LabDir(lab), "bmc", node)
+}
+
+// Labs lists the labs that have a workspace directory.
+func (w *Workspace) Labs() ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(w.Root, "labs"))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	var labs []string
+	for _, e := range entries {
+		if e.IsDir() {
+			labs = append(labs, e.Name())
+		}
+	}
+	return labs, err
+}
+
+// RemoveLab deletes everything the workspace holds for a lab.
+func (w *Workspace) RemoveLab(lab string) error {
+	return os.RemoveAll(w.LabDir(lab))
+}
+
 func (w *Workspace) mkdir(dir string) error {
 	// Create each missing component so ownership is fixed on all of them.
 	if _, err := os.Stat(dir); err == nil {
@@ -82,11 +107,23 @@ func (w *Workspace) chown(path string) error {
 
 // WriteFile writes a file under the workspace atomically (temp + rename).
 func (w *Workspace) WriteFile(path string, data []byte) error {
+	return w.write(path, data, 0o644)
+}
+
+// WriteSecret is WriteFile for credentials: readable by the owner only.
+func (w *Workspace) WriteSecret(path string, data []byte) error {
+	return w.write(path, data, 0o600)
+}
+
+func (w *Workspace) write(path string, data []byte, mode os.FileMode) error {
 	if err := w.mkdir(filepath.Dir(path)); err != nil {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, mode); err != nil {
 		return err
 	}
 	if err := w.chown(tmp); err != nil {
@@ -128,15 +165,25 @@ type PoolState struct {
 }
 
 type NodeState struct {
-	Name         string   `json:"name"`
-	Domain       string   `json:"domain"`
-	UUID         string   `json:"uuid"`
-	State        string   `json:"state"`
-	Disks        []string `json:"disks"`
-	NVRAM        string   `json:"nvram"`
-	Loader       string   `json:"loader"`
-	SerialSocket string   `json:"serialSocket"`
-	MACs         []string `json:"macs"`
+	Name         string    `json:"name"`
+	Domain       string    `json:"domain"`
+	UUID         string    `json:"uuid"`
+	State        string    `json:"state"`
+	Disks        []string  `json:"disks"`
+	NVRAM        string    `json:"nvram"`
+	Loader       string    `json:"loader"`
+	SerialSocket string    `json:"serialSocket"`
+	MACs         []string  `json:"macs"`
+	BMC          *BMCState `json:"bmc,omitempty"`
+}
+
+type BMCState struct {
+	Type     string `json:"type"`
+	Address  string `json:"address"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Unit     string `json:"unit"`
+	Endpoint string `json:"endpoint"`
 }
 
 func (w *Workspace) statePath(lab string) string {
