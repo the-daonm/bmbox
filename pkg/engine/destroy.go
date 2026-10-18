@@ -11,6 +11,7 @@ import (
 	"bmbox/pkg/bmc"
 	"bmbox/pkg/hypervisor"
 	"bmbox/pkg/network"
+	"bmbox/pkg/systemd"
 	"bmbox/pkg/topology"
 	"bmbox/pkg/workspace"
 )
@@ -157,12 +158,13 @@ func Destroy(ctx context.Context, lab string, t *topology.Topology, ws *workspac
 		log("    error: %v", err)
 	}
 
-	m, err := bmc.NewManager(ctx, bmc.Tools{})
+	var m *bmc.Manager
+	sd, err := systemd.Connect(ctx)
 	if err != nil {
 		fail(err)
-		m = nil
 	} else {
-		defer m.Close()
+		defer sd.Close()
+		m = bmc.NewManager(sd, bmc.Tools{})
 	}
 	hv, err := hypervisor.Connect(opt.LibvirtURI)
 	if err != nil {
