@@ -89,6 +89,7 @@ func (t *Topology) Validate() error {
 
 	t.validateNetworks(v)
 	t.validateNodes(v)
+	t.validateNetboot(v)
 
 	if len(v.problems) > 0 {
 		return &ValidationError{Problems: v.problems}
@@ -150,6 +151,67 @@ func (t *Topology) validateNetworks(v *validator) {
 				}{path + ".cidr", p})
 			}
 		}
+		if n.DHCP != nil {
+			validateDHCP(v, path, n)
+		}
+	}
+}
+
+func validateDHCP(v *validator, path string, n Network) {
+	if n.CIDR == "" {
+		v.addf(path+".dhcp", "needs cidr: bmbox serves DHCP from the network's gateway address")
+		return
+	}
+	gw, err := ParseGateway(n.CIDR)
+	if err != nil {
+		return // reported on cidr
+	}
+	if !gw.Addr().Is4() {
+		v.addf(path+".dhcp", "is IPv4 only, %s is not", n.CIDR)
+		return
+	}
+	first, last, err := ParseRange(n.DHCP.Range)
+	if err != nil {
+		v.addf(path+".dhcp.range", "%v", err)
+		return
+	}
+	lo, hi := hostBounds(gw)
+	g := gw.Addr()
+	switch {
+	case first.Less(lo) || hi.Less(last):
+		v.addf(path+".dhcp.range", "%s is not within the host addresses of %s (%s-%s)", n.DHCP.Range, n.CIDR, lo, hi)
+	case !g.Less(first) && !last.Less(g):
+		v.addf(path+".dhcp.range", "%s contains the gateway %s", n.DHCP.Range, g)
+	}
+}
+
+func (t *Topology) validateNetboot(v *validator) {
+	nb := t.Spec.Netboot
+	if nb == nil {
+		return
+	}
+	const p = "spec.netboot"
+	if len(t.DHCPNetworks()) == 0 {
+		v.addf(p, "needs a network with dhcp to boot from")
+	}
+	switch {
+	case nb.Kernel == "" && nb.Script == "":
+		v.addf(p, "set kernel (with optional initrd and cmdline) or script")
+	case nb.Kernel != "" && nb.Script != "":
+		v.addf(p, "kernel and script are mutually exclusive")
+	case nb.Script != "" && (nb.Initrd != "" || nb.Cmdline != ""):
+		v.addf(p, "initrd and cmdline only apply to kernel")
+	}
+	for _, f := range []struct{ name, val string }{{"kernel", nb.Kernel}, {"initrd", nb.Initrd}, {"script", nb.Script}} {
+		if f.val != "" && !filepath.IsAbs(f.val) && !isURL(f.val) {
+			v.addf(p+"."+f.name, "%q must be an absolute path or an http(s) URL", f.val)
+		}
+		if strings.ContainsAny(f.val, " \t\n") {
+			v.addf(p+"."+f.name, "%q must not contain whitespace", f.val)
+		}
+	}
+	if strings.ContainsAny(nb.Cmdline, "\n\r") {
+		v.addf(p+".cmdline", "must be a single line")
 	}
 }
 
@@ -159,6 +221,7 @@ func (t *Topology) validateNodes(v *validator) {
 	}
 	names := map[string]bool{}
 	macs := map[string]string{}
+	ips := map[netip.Addr]string{}
 	bmcPorts := map[int]string{}
 
 	for i, n := range t.Spec.Nodes {
@@ -208,6 +271,9 @@ func (t *Topology) validateNodes(v *validator) {
 				}
 				macs[key] = p
 			}
+			if nic.IP != "" {
+				t.validateNICAddress(v, p, nic, ips)
+			}
 		}
 
 		v.boot(path+".boot", n.Boot)
@@ -243,6 +309,40 @@ func (t *Topology) validateNodes(v *validator) {
 	}
 }
 
+// validateNICAddress checks a fixed address is a free host address of a
+// DHCP network.
+func (t *Topology) validateNICAddress(v *validator, p string, nic NIC, ips map[netip.Addr]string) {
+	ip, err := netip.ParseAddr(nic.IP)
+	if err != nil {
+		v.addf(p+".ip", "%q is not a valid IP address", nic.IP)
+		return
+	}
+	n := t.Network(nic.Network)
+	if n == nil {
+		return // reported on network
+	}
+	if n.DHCP == nil {
+		v.addf(p+".ip", "needs dhcp on network %q (the address is handed out by bmbox's DHCP)", n.Name)
+		return
+	}
+	gw, err := ParseGateway(n.CIDR)
+	if err != nil {
+		return
+	}
+	lo, hi := hostBounds(gw)
+	switch {
+	case !gw.Contains(ip) || ip.Less(lo) || hi.Less(ip):
+		v.addf(p+".ip", "%s is not a host address of %s", ip, n.CIDR)
+	case ip == gw.Addr():
+		v.addf(p+".ip", "%s is the gateway of %s", ip, n.Name)
+	default:
+		if other, ok := ips[ip]; ok {
+			v.addf(p+".ip", "%s already used by %s", ip, other)
+		}
+		ips[ip] = p
+	}
+}
+
 // ParseGateway interprets a network CIDR. "10.0.0.0/24" puts the gateway on
 // the first host address (10.0.0.1/24); "10.0.0.254/24" uses that address.
 func ParseGateway(cidr string) (netip.Prefix, error) {
@@ -258,4 +358,58 @@ func ParseGateway(cidr string) (netip.Prefix, error) {
 		addr = addr.Next()
 	}
 	return netip.PrefixFrom(addr, p.Bits()), nil
+}
+
+// ParseRange parses a DHCP range "first-last".
+func ParseRange(r string) (first, last netip.Addr, err error) {
+	a, b, ok := strings.Cut(r, "-")
+	if ok {
+		first, err = netip.ParseAddr(strings.TrimSpace(a))
+		if err == nil {
+			last, err = netip.ParseAddr(strings.TrimSpace(b))
+		}
+	}
+	if !ok || err != nil {
+		return first, last, fmt.Errorf("%q is not a range of the form FIRST-LAST", r)
+	}
+	if last.Less(first) {
+		return first, last, fmt.Errorf("%q ends before it starts", r)
+	}
+	return first, last, nil
+}
+
+// hostBounds returns the first and last host address of an IPv4 prefix.
+func hostBounds(p netip.Prefix) (first, last netip.Addr) {
+	p = p.Masked()
+	b := p.Addr().As4()
+	n := uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
+	bcast := n | (1<<(32-p.Bits()) - 1)
+	return p.Addr().Next(), netip.AddrFrom4([4]byte{byte(bcast >> 24), byte(bcast >> 16), byte(bcast >> 8), byte(bcast)}).Prev()
+}
+
+// defaultDHCPRange is the larger run of host addresses on either side of
+// the gateway.
+func defaultDHCPRange(cidr string) (first, last netip.Addr, ok bool) {
+	gw, err := ParseGateway(cidr)
+	if err != nil || !gw.Addr().Is4() {
+		return first, last, false
+	}
+	lo, hi := hostBounds(gw)
+	g := gw.Addr()
+	below, above := addrDistance(lo, g), addrDistance(g, hi)
+	if above >= below {
+		return g.Next(), hi, above > 0
+	}
+	return lo, g.Prev(), true
+}
+
+func addrDistance(a, b netip.Addr) uint32 {
+	x, y := a.As4(), b.As4()
+	u := func(v [4]byte) uint32 { return uint32(v[0])<<24 | uint32(v[1])<<16 | uint32(v[2])<<8 | uint32(v[3]) }
+	return u(y) - u(x)
+}
+
+// isURL reports whether s is an http(s) URL iPXE can fetch.
+func isURL(s string) bool {
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
 }
