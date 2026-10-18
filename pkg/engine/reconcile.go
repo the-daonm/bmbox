@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"bmbox/pkg/hypervisor"
 	"bmbox/pkg/network"
@@ -20,16 +21,18 @@ type orphans struct {
 	units   map[string]string // node -> unit of a BMC no longer declared
 	volumes []string
 	bridges map[string]string // network -> bridge
+	rules   map[string]string // network -> bridge of a FORWARD rule
 	dhcp    string            // dnsmasq unit of a lab with no DHCP network left
 }
 
 func (o orphans) empty() bool {
-	return len(o.nodes) == 0 && len(o.units) == 0 && len(o.volumes) == 0 && len(o.bridges) == 0 && o.dhcp == ""
+	return len(o.nodes) == 0 && len(o.units) == 0 && len(o.volumes) == 0 && len(o.bridges) == 0 &&
+		len(o.rules) == 0 && o.dhcp == ""
 }
 
 // findOrphans compares what is discovered on the host with the topology.
 func findOrphans(t *topology.Topology, d discovered, poolVolumes []string) orphans {
-	o := orphans{units: map[string]string{}, bridges: map[string]string{}}
+	o := orphans{units: map[string]string{}, bridges: map[string]string{}, rules: map[string]string{}}
 	declared, withBMC, expected := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	nodes := append([]string(nil), d.nodes...)
 	for _, n := range t.Spec.Nodes {
@@ -61,6 +64,11 @@ func findOrphans(t *topology.Topology, d discovered, poolVolumes []string) orpha
 	for n, br := range d.bridges {
 		if t.Network(n) == nil {
 			o.bridges[n] = br
+		}
+	}
+	for n, br := range d.rules {
+		if net := t.Network(n); net == nil || net.External || net.Bridge != br {
+			o.rules[n] = br
 		}
 	}
 	if d.dhcp != "" && len(t.DHCPNetworks()) == 0 {
@@ -113,6 +121,9 @@ func reconcile(ctx context.Context, t *topology.Topology, hv *hypervisor.Client,
 		for n, br := range o.bridges {
 			log("    network %s (%s)", n, br)
 		}
+		for n, br := range o.rules {
+			log("    firewall rule for %s (%s)", n, br)
+		}
 		if o.dhcp != "" {
 			log("    dhcp    %s", o.dhcp)
 		}
@@ -155,6 +166,17 @@ func reconcile(ctx context.Context, t *topology.Topology, hv *hypervisor.Client,
 			continue
 		}
 		log("    network %s deleted (%s)", n, br)
+	}
+	if len(o.rules) > 0 {
+		removed, err := network.NewFirewall().Remove(func(owner string) bool {
+			n, ok := strings.CutPrefix(owner, lab+"/")
+			_, orphan := o.rules[n]
+			return ok && orphan
+		})
+		errs = append(errs, err)
+		for _, r := range removed {
+			log("    firewall rule for %s removed", strings.TrimPrefix(r, lab+"/"))
+		}
 	}
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("prune: %w", err)
