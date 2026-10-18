@@ -215,6 +215,10 @@ func Up(ctx context.Context, t *topology.Topology, raw []byte, ws *workspace.Wor
 		log("    %-10s bridge=%-15s %-8s %s", n.Name, res.Name, action, res.Address)
 	}
 
+	if err := allowBridgedTraffic(t, log); err != nil {
+		return st, err
+	}
+
 	changes, err := network.EnsureHostSysctls(needForwarding)
 	st.Sysctls = mergeSysctls(st.Sysctls, changes)
 	if err != nil {
@@ -390,6 +394,33 @@ func preflightBMCs(ctx context.Context, t *topology.Topology, nets []network.Bri
 		}
 	}
 	return m, nil
+}
+
+// allowBridgedTraffic keeps the lab bridges' traffic out of the host's
+// iptables FORWARD policy (see network.Firewall).
+func allowBridgedTraffic(t *topology.Topology, log func(string, ...any)) error {
+	fw := network.NewFirewall()
+	if !fw.Available() {
+		log("    firewall  no iptables on this host, nothing to allow")
+		return nil
+	}
+	any := false
+	for _, n := range t.Spec.Networks {
+		if n.External {
+			continue // not ours to open
+		}
+		added, err := fw.AllowBridge(t.Metadata.Name+"/"+n.Name, n.Bridge)
+		if err != nil {
+			return fmt.Errorf("network %s: %w", n.Name, err)
+		}
+		any = any || added
+	}
+	action := "ok"
+	if any {
+		action = "added"
+	}
+	log("    firewall  %s: traffic within lab bridges accepted in FORWARD (%s)", action, fw.Tools())
+	return nil
 }
 
 // preflightNetboot locates dnsmasq (and iPXE when nodes netboot) and checks

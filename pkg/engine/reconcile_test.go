@@ -55,3 +55,26 @@ spec:
 		t.Errorf("expected no orphans, got %+v", clean)
 	}
 }
+
+func TestFirewallRuleOrphans(t *testing.T) {
+	topo, err := topology.Parse([]byte(`
+apiVersion: bmbox.io/v1alpha1
+kind: Topology
+metadata: {name: lab1}
+spec:
+  networks: [{name: pxe}, {name: ext, bridge: br-ext, external: true}]
+  nodes: [{name: a, nics: [{network: pxe}]}]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := discovered{units: map[string]string{}, bridges: map[string]string{}, rules: map[string]string{
+		"pxe":  "bmb-lab1-pxe",  // declared
+		"data": "bmb-lab1-data", // network removed
+		"ext":  "br-ext",        // now external
+	}}
+	o := findOrphans(topo, d, nil)
+	if len(o.rules) != 2 || o.rules["data"] == "" || o.rules["ext"] == "" {
+		t.Errorf("rule orphans = %v", o.rules)
+	}
+}

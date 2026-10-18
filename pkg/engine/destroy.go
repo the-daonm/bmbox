@@ -25,6 +25,7 @@ type discovered struct {
 	nodes   []string
 	units   map[string]string // node -> unit
 	bridges map[string]string // network -> bridge
+	rules   map[string]string // network -> bridge of a FORWARD rule
 	dhcp    string            // the lab's dnsmasq unit, if loaded
 }
 
@@ -54,6 +55,8 @@ func discover(ctx context.Context, lab string, hv *hypervisor.Client, sd *system
 	if bridges != nil {
 		d.bridges = bridges
 	}
+	d.rules, err = network.NewFirewall().LabRules(lab)
+	errs = append(errs, err)
 	return d, errors.Join(errs...)
 }
 
@@ -184,7 +187,7 @@ func Destroy(ctx context.Context, lab string, t *topology.Topology, ws *workspac
 	if err != nil {
 		fail(err)
 	}
-	if st == nil && t == nil && len(d.nodes) == 0 && len(d.units) == 0 && len(d.bridges) == 0 && d.dhcp == "" {
+	if st == nil && t == nil && len(d.nodes) == 0 && len(d.units) == 0 && len(d.bridges) == 0 && d.dhcp == "" && len(d.rules) == 0 {
 		if st == nil {
 			_ = ws.RemoveLab(lab) // only the lock we just created
 		}
@@ -256,6 +259,13 @@ func Destroy(ctx context.Context, lab string, t *topology.Topology, ws *workspac
 		if deleted {
 			log("    %-10s deleted %s", n.Name, n.Bridge)
 		}
+	}
+	removed, err := network.NewFirewall().Remove(func(owner string) bool { return strings.HasPrefix(owner, lab+"/") })
+	if err != nil {
+		fail(err)
+	}
+	for _, o := range removed {
+		log("    %-10s firewall rule removed", strings.TrimPrefix(o, lab+"/"))
 	}
 	for _, c := range p.sysctls {
 		if otherLabNeeds(ws, lab, c.Key) {
