@@ -1,6 +1,5 @@
 // Package bmc runs one emulated BMC per node (Redfish via sushy-tools, IPMI
-// via virtualbmc) as a systemd transient unit, so the BMCs keep serving
-// after bmbox exits, are restarted on failure and log to the journal.
+// via virtualbmc) as a systemd transient unit (see pkg/systemd).
 package bmc
 
 import (
@@ -16,8 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	sdbus "github.com/coreos/go-systemd/v22/dbus"
-	"github.com/godbus/dbus/v5"
+	"bmbox/pkg/systemd"
 )
 
 const (
@@ -129,52 +127,43 @@ func interpreterOf(script string) (string, error) {
 	return fields[0], nil
 }
 
-// Manager starts and stops BMC units through systemd's D-Bus API.
+// Manager starts and stops BMC units through systemd.
 type Manager struct {
-	conn  *sdbus.Conn
+	sd    *systemd.Manager
 	tools Tools
 }
 
-func NewManager(ctx context.Context, tools Tools) (*Manager, error) {
-	conn, err := sdbus.NewSystemConnectionContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("connect to systemd: %w", err)
-	}
-	return &Manager{conn: conn, tools: tools}, nil
+// NewManager uses sd for unit control; the caller keeps ownership of it.
+func NewManager(sd *systemd.Manager, tools Tools) *Manager {
+	return &Manager{sd: sd, tools: tools}
 }
-
-func (m *Manager) Close() { m.conn.Close() }
 
 // LabUnits finds the loaded BMC units of a lab, keyed by node. The node is
 // read from the unit description ("... for <lab>/<node>") because names are
 // ambiguous when lab names contain dashes.
 func (m *Manager) LabUnits(ctx context.Context, lab string) (map[string]string, error) {
-	units, err := m.conn.ListUnitsByPatternsContext(ctx, nil, []string{"bmbox-" + lab + "-*-bmc.service"})
+	units, err := m.sd.Units(ctx, "bmbox-"+lab+"-*-bmc.service")
 	if err != nil {
 		return nil, fmt.Errorf("list BMC units: %w", err)
 	}
 	out := map[string]string{}
-	for _, u := range units {
-		i := strings.LastIndex(u.Description, " for ")
+	for name, desc := range units {
+		i := strings.LastIndex(desc, " for ")
 		if i < 0 {
 			continue
 		}
-		if l, node, ok := strings.Cut(u.Description[i+5:], "/"); ok && l == lab {
-			out[node] = u.Name
+		if l, node, ok := strings.Cut(desc[i+5:], "/"); ok && l == lab {
+			out[node] = name
 		}
 	}
 	return out, nil
 }
 
 // State returns the unit's ActiveState ("active", "failed", "inactive"...).
-func (m *Manager) State(ctx context.Context, unit string) string {
-	p, err := m.conn.GetUnitPropertyContext(ctx, unit, "ActiveState")
-	if err != nil {
-		return "unknown"
-	}
-	s, _ := p.Value.Value().(string)
-	return s
-}
+func (m *Manager) State(ctx context.Context, unit string) string { return m.sd.State(ctx, unit) }
+
+// Stop stops a BMC unit; one that does not exist is not an error.
+func (m *Manager) Stop(ctx context.Context, unit string) error { return m.sd.Stop(ctx, unit) }
 
 type Result struct {
 	Started bool
@@ -203,43 +192,18 @@ func (m *Manager) Ensure(ctx context.Context, s Spec, w FileWriter) (*Result, er
 	if !changed && m.State(ctx, s.Unit) == "active" {
 		return &Result{}, nil
 	}
-	if err := m.Stop(ctx, s.Unit); err != nil {
+	if err := m.sd.Start(ctx, systemd.Service{
+		Unit:        s.Unit,
+		Description: fmt.Sprintf("bmbox %s BMC for %s/%s", s.Type, s.Lab, s.Node),
+		Cmd:         cmd,
+		Env:         []string{"PYTHONUNBUFFERED=1"},
+	}); err != nil {
 		return nil, err
-	}
-	props := []sdbus.Property{
-		sdbus.PropDescription(fmt.Sprintf("bmbox %s BMC for %s/%s", s.Type, s.Lab, s.Node)),
-		sdbus.PropExecStart(cmd, false),
-		{Name: "Restart", Value: dbus.MakeVariant("on-failure")},
-		{Name: "RestartUSec", Value: dbus.MakeVariant(uint64(2 * time.Second / time.Microsecond))},
-		{Name: "Environment", Value: dbus.MakeVariant([]string{"PYTHONUNBUFFERED=1"})},
-	}
-	done := make(chan string, 1)
-	if _, err := m.conn.StartTransientUnitContext(ctx, s.Unit, "replace", props, done); err != nil {
-		return nil, fmt.Errorf("start %s: %w", s.Unit, err)
-	}
-	if r := <-done; r != "done" {
-		return nil, fmt.Errorf("start %s: job %s", s.Unit, r)
 	}
 	if err := m.waitReady(ctx, s); err != nil {
 		return nil, err
 	}
 	return &Result{Started: true}, nil
-}
-
-// Stop stops a unit and clears its failed state. A unit that does not exist
-// is not an error.
-func (m *Manager) Stop(ctx context.Context, unit string) error {
-	done := make(chan string, 1)
-	if _, err := m.conn.StopUnitContext(ctx, unit, "replace", done); err != nil {
-		var de dbus.Error
-		if errors.As(err, &de) && strings.HasSuffix(de.Name, "NoSuchUnit") {
-			return nil
-		}
-		return fmt.Errorf("stop %s: %w", unit, err)
-	}
-	<-done
-	_ = m.conn.ResetFailedUnitContext(ctx, unit)
-	return nil
 }
 
 func (m *Manager) waitReady(ctx context.Context, s Spec) error {

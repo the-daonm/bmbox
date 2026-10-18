@@ -14,6 +14,7 @@ import (
 	"bmbox/pkg/bmc"
 	"bmbox/pkg/hypervisor"
 	"bmbox/pkg/network"
+	"bmbox/pkg/systemd"
 	"bmbox/pkg/topology"
 	"bmbox/pkg/workspace"
 )
@@ -138,12 +139,14 @@ func Up(ctx context.Context, t *topology.Topology, raw []byte, ws *workspace.Wor
 			return st, fmt.Errorf("network %s: %w", n.Name, err)
 		}
 	}
-	bmcs, err := preflightBMCs(ctx, t, specs, opt)
+	sd, err := systemd.Connect(ctx)
 	if err != nil {
 		return st, err
 	}
-	if bmcs != nil {
-		defer bmcs.Close()
+	defer sd.Close()
+	bmcs, err := preflightBMCs(ctx, t, specs, sd, opt)
+	if err != nil {
+		return st, err
 	}
 	for i, n := range t.Spec.Networks {
 		res, err := network.EnsureBridge(specs[i])
@@ -262,7 +265,7 @@ func Up(ctx context.Context, t *topology.Topology, raw []byte, ws *workspace.Wor
 	}
 
 	// 5. Resources of this lab that are no longer in the topology
-	return st, reconcile(ctx, t, hv, bmcs, opt, log)
+	return st, reconcile(ctx, t, hv, sd, opt, log)
 }
 
 func ensureBMCs(ctx context.Context, t *topology.Topology, st *workspace.LabState, bmcs *bmc.Manager,
@@ -295,7 +298,7 @@ func ensureBMCs(ctx context.Context, t *topology.Topology, st *workspace.LabStat
 // preflightBMCs locates the BMC tools, connects to systemd and checks every
 // BMC port is free, before anything is created. It returns nil when the lab
 // has no BMCs.
-func preflightBMCs(ctx context.Context, t *topology.Topology, nets []network.BridgeSpec, opt Options) (*bmc.Manager, error) {
+func preflightBMCs(ctx context.Context, t *topology.Topology, nets []network.BridgeSpec, sd *systemd.Manager, opt Options) (*bmc.Manager, error) {
 	need := map[string]bool{}
 	for _, n := range t.Spec.Nodes {
 		if n.BMC != nil {
@@ -309,10 +312,7 @@ func preflightBMCs(ctx context.Context, t *topology.Topology, nets []network.Bri
 	if err != nil {
 		return nil, err
 	}
-	m, err := bmc.NewManager(ctx, tools)
-	if err != nil {
-		return nil, err
-	}
+	m := bmc.NewManager(sd, tools)
 
 	// A BMC may listen on a lab gateway that only exists once its bridge
 	// is created.
@@ -334,7 +334,6 @@ func preflightBMCs(ctx context.Context, t *topology.Topology, nets []network.Bri
 			err = fmt.Errorf("address %s is not configured on this host", n.BMC.Address)
 		}
 		if err != nil {
-			m.Close()
 			return nil, fmt.Errorf("node %s BMC: %w", n.Name, err)
 		}
 	}

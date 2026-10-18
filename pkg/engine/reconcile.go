@@ -9,6 +9,7 @@ import (
 	"bmbox/pkg/bmc"
 	"bmbox/pkg/hypervisor"
 	"bmbox/pkg/network"
+	"bmbox/pkg/systemd"
 	"bmbox/pkg/topology"
 )
 
@@ -67,16 +68,11 @@ func findOrphans(t *topology.Topology, d discovered, poolVolumes []string) orpha
 }
 
 // reconcile reports orphans, and removes them when opt.Prune is set.
-func reconcile(ctx context.Context, t *topology.Topology, hv *hypervisor.Client, m *bmc.Manager,
+func reconcile(ctx context.Context, t *topology.Topology, hv *hypervisor.Client, sd *systemd.Manager,
 	opt Options, log func(string, ...any)) error {
 	lab := t.Metadata.Name
-	if m == nil {
-		// The lab declares no BMC, but an earlier version of it may have.
-		if mm, err := bmc.NewManager(ctx, bmc.Tools{}); err == nil {
-			m = mm
-			defer m.Close()
-		}
-	}
+	// Even a lab that declares no BMC may have had some in an earlier version.
+	m := bmc.NewManager(sd, bmc.Tools{})
 	d, err := discover(ctx, lab, hv, m)
 	if err != nil {
 		return err

@@ -6,6 +6,7 @@ import (
 
 	"bmbox/pkg/bmc"
 	"bmbox/pkg/hypervisor"
+	"bmbox/pkg/systemd"
 	"bmbox/pkg/workspace"
 )
 
@@ -36,9 +37,9 @@ func Status(ctx context.Context, lab string, ws *workspace.Workspace, opt Option
 	}
 	defer hv.Close()
 	var m *bmc.Manager
-	if mm, err := bmc.NewManager(ctx, bmc.Tools{}); err == nil {
-		m = mm
-		defer m.Close()
+	if sd, err := systemd.Connect(ctx); err == nil {
+		defer sd.Close()
+		m = bmc.NewManager(sd, bmc.Tools{})
 	}
 
 	var out []NodeStatus
