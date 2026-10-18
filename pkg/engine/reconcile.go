@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 
-	"bmbox/pkg/bmc"
 	"bmbox/pkg/hypervisor"
 	"bmbox/pkg/network"
 	"bmbox/pkg/systemd"
@@ -20,10 +20,11 @@ type orphans struct {
 	units   map[string]string // node -> unit of a BMC no longer declared
 	volumes []string
 	bridges map[string]string // network -> bridge
+	dhcp    string            // dnsmasq unit of a lab with no DHCP network left
 }
 
 func (o orphans) empty() bool {
-	return len(o.nodes) == 0 && len(o.units) == 0 && len(o.volumes) == 0 && len(o.bridges) == 0
+	return len(o.nodes) == 0 && len(o.units) == 0 && len(o.volumes) == 0 && len(o.bridges) == 0 && o.dhcp == ""
 }
 
 // findOrphans compares what is discovered on the host with the topology.
@@ -62,18 +63,30 @@ func findOrphans(t *topology.Topology, d discovered, poolVolumes []string) orpha
 			o.bridges[n] = br
 		}
 	}
+	if d.dhcp != "" && len(t.DHCPNetworks()) == 0 {
+		o.dhcp = d.dhcp
+	}
 	sort.Strings(o.nodes)
 	sort.Strings(o.volumes)
 	return o
+}
+
+// stopNetboot stops the lab's dnsmasq unit (if any) and removes its config,
+// leases and TFTP root.
+func stopNetboot(ctx context.Context, sd *systemd.Manager, lab, unit string) error {
+	if unit != "" {
+		if err := sd.Stop(ctx, unit); err != nil {
+			return err
+		}
+	}
+	return os.RemoveAll(NetbootDir(lab))
 }
 
 // reconcile reports orphans, and removes them when opt.Prune is set.
 func reconcile(ctx context.Context, t *topology.Topology, hv *hypervisor.Client, sd *systemd.Manager,
 	opt Options, log func(string, ...any)) error {
 	lab := t.Metadata.Name
-	// Even a lab that declares no BMC may have had some in an earlier version.
-	m := bmc.NewManager(sd, bmc.Tools{})
-	d, err := discover(ctx, lab, hv, m)
+	d, err := discover(ctx, lab, hv, sd)
 	if err != nil {
 		return err
 	}
@@ -100,13 +113,23 @@ func reconcile(ctx context.Context, t *topology.Topology, hv *hypervisor.Client,
 		for n, br := range o.bridges {
 			log("    network %s (%s)", n, br)
 		}
+		if o.dhcp != "" {
+			log("    dhcp    %s", o.dhcp)
+		}
 		return nil
 	}
 
 	log("==> Pruning resources no longer in topology")
 	var errs []error
+	if o.dhcp != "" {
+		if err := stopNetboot(ctx, sd, lab, o.dhcp); err != nil {
+			errs = append(errs, err)
+		} else {
+			log("    dhcp    %s stopped", o.dhcp)
+		}
+	}
 	for n, u := range o.units {
-		if err := m.Stop(ctx, u); err != nil {
+		if err := sd.Stop(ctx, u); err != nil {
 			errs = append(errs, err)
 			continue
 		}

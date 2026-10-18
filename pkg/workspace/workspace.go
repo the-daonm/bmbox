@@ -143,6 +143,14 @@ type LabState struct {
 	Sysctls   []SysctlState  `json:"sysctls,omitempty"`
 	Pool      PoolState      `json:"pool"`
 	Nodes     []NodeState    `json:"nodes"`
+	DHCP      *DHCPState     `json:"dhcp,omitempty"`
+}
+
+// DHCPState is the lab's dnsmasq (DHCP and netboot).
+type DHCPState struct {
+	Unit      string `json:"unit"`
+	Dir       string `json:"dir"`
+	LeaseFile string `json:"leaseFile"`
 }
 
 type NetworkState struct {
@@ -247,11 +255,13 @@ func (w *Workspace) Lock(lab string) (func(), error) {
 	}, nil
 }
 
-// Tools remembers where the BMC programs were found, so they only have to
-// be given once per host.
+// Tools remembers where the BMC and netboot programs were found, so they
+// only have to be given once per host.
 type Tools struct {
 	SushyEmulator string `json:"sushyEmulator,omitempty"`
 	VBMC          string `json:"vbmc,omitempty"`
+	Dnsmasq       string `json:"dnsmasq,omitempty"`
+	IPXE          string `json:"ipxe,omitempty"`
 }
 
 func (w *Workspace) toolsPath() string { return filepath.Join(w.Root, "tools.json") }
