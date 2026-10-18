@@ -50,6 +50,11 @@ func init() {
 // resolveLab returns the lab to act on: --lab, else the topology file's name.
 // The topology is returned too when it could be loaded.
 func resolveLab() (string, *topology.Topology, error) {
+	if labFlag != "" {
+		if err := topology.ValidateLabName(labFlag); err != nil {
+			return "", nil, fmt.Errorf("--lab: %w", err)
+		}
+	}
 	t, _, err := loadTopology()
 	switch {
 	case labFlag != "" && (t == nil || t.Metadata.Name != labFlag):
