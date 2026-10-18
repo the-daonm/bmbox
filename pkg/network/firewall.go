@@ -175,11 +175,16 @@ func (f *Firewall) rules(bin string) ([]fwRule, error) {
 		if len(fields) < 2 || fields[0] != "-A" || fields[1] != ForwardChain {
 			continue
 		}
-		r := fwRule{args: fields[2:]}
+		// -S quotes comments; bmbox's never contain spaces, so dropping the
+		// quotes gives back the arguments the rule was created with.
+		r := fwRule{}
+		for _, f := range fields[2:] {
+			r.args = append(r.args, strings.Trim(f, `"`))
+		}
 		for i := 0; i+1 < len(r.args); i++ {
 			switch r.args[i] {
 			case "--comment":
-				if owner, ok := strings.CutPrefix(strings.Trim(r.args[i+1], `"`), aliasPrefix); ok {
+				if owner, ok := strings.CutPrefix(r.args[i+1], aliasPrefix); ok {
 					r.owner = owner
 				}
 			case "-i":
