@@ -10,8 +10,8 @@ Linux bridges, storage and libvirt domains for it.
 |------|-------|-------|
 | 3 | CLI, topology parser/validation, bridges via netlink, libvirt domains (UEFI, serial socket), storage pool + per-node NVRAM, workspace | done |
 | 4 | Per-node BMCs (Redfish via sushy-tools, IPMI via virtualbmc) as systemd units, `bmbox destroy`, `bmbox status`, `bmbox console` | done |
-| 5 | Per-lab DHCP and iPXE netboot (dnsmasq) | done |
-| 5 | Ironic export, inter-node traffic under `bridge-nf-call-iptables`, BMC TLS and generated passwords, CI | planned |
+| 5 | Per-lab DHCP and iPXE netboot (dnsmasq); node-to-node traffic under `bridge-nf-call-iptables` | done |
+| 5 | Ironic export, BMC TLS and generated passwords, CI | planned |
 
 ## Usage
 
@@ -72,6 +72,32 @@ are remembered like the BMC tools. They do not have to be installed
 system-wide: `apt-get download dnsmasq-base ipxe` followed by `dpkg -x` into
 a directory works.
 
+## Firewall (bridge-nf-call-iptables)
+
+When `br_netfilter` is loaded and `net.bridge.bridge-nf-call-iptables=1`
+(Docker and Neutron set this host-wide), frames between two nodes on the
+same bridge pass through the iptables `FORWARD` chain. If that chain's
+policy is `DROP`, as Docker sets it, the nodes cannot reach each other.
+Traffic to the host (DHCP, TFTP) goes through `INPUT` and is not affected.
+bmbox does not change the host-wide sysctl. The per-bridge
+`nf_call_iptables` knob cannot turn filtering off either, because the
+kernel ORs it with the host setting. Instead, `up` does what libvirt does:
+in a `BMBOX-FORWARD` chain, which `FORWARD` jumps to first, it accepts
+traffic that enters and leaves the same lab bridge:
+
+```
+-A FORWARD -j BMBOX-FORWARD
+-A BMBOX-FORWARD -i bmb-demo-pxe -o bmb-demo-pxe -m comment --comment "bmbox:demo/pxe" -j ACCEPT
+```
+
+The rule is added with both `iptables` and `ip6tables`, using the host's
+own binaries (legacy or nft), so it lands in the chain that holds the
+host's `DROP`. Rules are tagged with their lab network. `destroy` and
+`up --prune` remove them, and the chain and jump go away with the last
+rule. External bridges get no rule. Nothing is routed or NATed between a
+lab and the outside. A firewall reload that flushes `FORWARD` drops the
+jump, and the next `up` restores it.
+
 Flags: `-f/--file` topology file (default `topology.yaml`), `-c/--connect`
 libvirt URI (default `$LIBVIRT_DEFAULT_URI` or `qemu:///system`).
 `BMBOX_HOME` overrides the workspace directory (default `~/.bmbox` of the
@@ -82,7 +108,7 @@ invoking user, also under sudo).
 ```
 cmd/            Cobra commands (validate, render, up, status, list, console, destroy)
 pkg/topology    topology.yaml schema, defaults, validation
-pkg/network     Linux bridges via rtnetlink, sysctl handling
+pkg/network     Linux bridges via rtnetlink, sysctls, FORWARD rules for lab bridges
 pkg/hypervisor  libvirt RPC client: firmware discovery, storage pool, domain XML
 pkg/systemd     transient service units over D-Bus
 pkg/bmc         per-node Redfish/IPMI BMCs as systemd units
@@ -107,12 +133,14 @@ go build -o bin/bmbox . && BMBOX=bin/bmbox scripts/e2e.sh   # on a libvirt host
 `scripts/e2e.sh` brings up its own lab (`e2e`, subnet 172.30.90.0/24,
 BMC ports 8390/6390) and runs the whole lifecycle against real libvirt: up,
 Redfish and IPMI power control, netboot (DHCP lease, iPXE, the kernel on
-the serial console), console, convergence and `--prune`, locking and
-destroy. By default it netboots the host's `/boot/vmlinuz` and
-`/boot/initrd.img` (`E2E_KERNEL` / `E2E_INITRD`). It snapshots the rest of the host (domains, storage
-pools, bridges, bmbox units and the sysctls bmbox may change) before and
-after, and fails if anything outside its lab changed. It honours
+the serial console), console, convergence and `--prune`, traffic on a lab
+bridge despite a `FORWARD` drop (two network namespaces as endpoints),
+locking and destroy. By default it netboots the host's `/boot/vmlinuz` and
+`/boot/initrd.img` (`E2E_KERNEL` / `E2E_INITRD`). It snapshots the rest
+of the host (domains, storage pools, bridges, bmbox units and data, the
+`FORWARD` chains and the sysctls bmbox may change) before and after, and
+fails if anything outside its lab changed. It honours
 `BMBOX_HOME` and `LIBVIRT_DEFAULT_URI`; BMC tools are found as for
 `bmbox up`, and dnsmasq/iPXE are found as described above.
 
-Demo walkthroughs: [week 3](docs/demo-week3.md), [week 4](docs/demo-week4.md).
+Demo walkthroughs: [week 3](docs/demo-week3.md), [week 4](docs/demo-week4.md), [week 5](docs/demo-week5.md).
