@@ -4,14 +4,18 @@
 #   BMBOX=bin/bmbox scripts/e2e.sh
 #
 # The test brings up its own lab, "e2e" (two nodes: n1 with a Redfish BMC,
-# n2 with an IPMI BMC), on its own subnet and ports, so other labs on the
-# host are left alone and checked to stay that way. Needs sudo, virsh,
-# curl, ipmitool, flock and python3, plus sushy-tools and virtualbmc as for
-# `bmbox up` (BMBOX_SUSHY_EMULATOR / BMBOX_VBMC, or remembered paths).
+# n2 with an IPMI BMC, both netbooting from the lab's DHCP), on its own
+# subnet and ports, so other labs on the host are left alone and checked to
+# stay that way. Needs sudo, virsh, curl, ipmitool, flock and python3, plus
+# sushy-tools, virtualbmc, dnsmasq and iPXE as for `bmbox up`
+# (BMBOX_SUSHY_EMULATOR / BMBOX_VBMC / BMBOX_DNSMASQ / BMBOX_IPXE, or
+# remembered paths).
 #
 # Honoured: BMBOX (binary, default ./bmbox), BMBOX_HOME, LIBVIRT_DEFAULT_URI,
 # E2E_CIDR (default 172.30.90.0/24), E2E_REDFISH_PORT (8390),
-# E2E_IPMI_PORT (6390).
+# E2E_IPMI_PORT (6390), E2E_KERNEL / E2E_INITRD (netbooted kernel and
+# initrd, default the host's /boot/vmlinuz and /boot/initrd.img; the kernel
+# must print to ttyS0).
 set -u -o pipefail
 
 BMBOX=${BMBOX:-./bmbox}
@@ -19,6 +23,8 @@ LAB=e2e
 CIDR=${E2E_CIDR:-172.30.90.0/24}
 REDFISH_PORT=${E2E_REDFISH_PORT:-8390}
 IPMI_PORT=${E2E_IPMI_PORT:-6390}
+KERNEL=${E2E_KERNEL:-/boot/vmlinuz}
+INITRD=${E2E_INITRD:-/boot/initrd.img}
 URI=${LIBVIRT_DEFAULT_URI:-qemu:///system}
 WS=${BMBOX_HOME:-$HOME/.bmbox}
 STATE=$WS/labs/$LAB/state.json
@@ -34,6 +40,10 @@ for tool in sudo virsh curl ipmitool flock python3 ip systemctl; do
 	command -v "$tool" >/dev/null || die "missing required tool: $tool"
 done
 sudo -n true 2>/dev/null || sudo true || die "sudo is required"
+for f in "$KERNEL" "$INITRD"; do
+	sudo test -r "$f" || die "netboot file $f not found (set E2E_KERNEL / E2E_INITRD)"
+done
+N1_IP=$(python3 -c "import ipaddress,sys; print(ipaddress.ip_network(sys.argv[1], strict=False)[10])" "$CIDR")
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -50,19 +60,24 @@ spec:
   networks:
     - name: pxe
       cidr: $CIDR
+      dhcp: {}
     - name: data
+  netboot:
+    kernel: $KERNEL
+    initrd: $INITRD
+    cmdline: console=ttyS0
   nodes:
     - name: n1
       memory: 1GiB
       disks: [{size: 40GiB}, {size: 2GiB}]
-      nics: [{network: pxe}, {network: data}]
+      nics: [{network: pxe, ip: $N1_IP}, {network: data}]
       bmc: {type: redfish, port: $REDFISH_PORT}
     - name: n2
       memory: 1GiB
       nics: [{network: pxe}]
       bmc: {type: ipmi, port: $IPMI_PORT}
 EOF
-# The same lab without n2, without the data network and without n1's 2nd disk.
+# The same lab without n2, the data network, n1's 2nd disk and DHCP.
 cat >"$SMALL" <<EOF
 apiVersion: bmbox.io/v1alpha1
 kind: Topology
@@ -85,6 +100,7 @@ EOF
 bm() {
 	sudo env BMBOX_HOME="$WS" LIBVIRT_DEFAULT_URI="$URI" \
 		BMBOX_SUSHY_EMULATOR="${BMBOX_SUSHY_EMULATOR:-}" BMBOX_VBMC="${BMBOX_VBMC:-}" \
+		BMBOX_DNSMASQ="${BMBOX_DNSMASQ:-}" BMBOX_IPXE="${BMBOX_IPXE:-}" \
 		"$BMBOX" "$@"
 }
 vsh() { sudo virsh -c "$URI" "$@"; }
@@ -119,12 +135,17 @@ e2e_domains() { for d in $(domains); do [ "$(lab_of_domain "$d")" = "$LAB" ] && 
 other_domains() { for d in $(domains); do [ "$(lab_of_domain "$d")" != "$LAB" ] && echo "$d"; done | sort; }
 e2e_bridges() { ip -o link show type bridge | grep -F "alias bmbox:$LAB/" | awk -F': ' '{print $2}'; }
 other_bridges() { ip -o link show type bridge | grep -vF "alias bmbox:$LAB/" | awk -F': ' '{print $2}' | sort; }
-e2e_units() { systemctl list-units 'bmbox-*' --all --no-legend --plain | grep -F " for $LAB/" | awk '{print $1}'; }
-other_units() { systemctl list-units 'bmbox-*' --all --no-legend --plain | grep -vF " for $LAB/" | awk '{print $1, $3, $4}' | sort; }
+# Unit descriptions end in "for <lab>/<node>" (BMC) or "for <lab>" (dnsmasq).
+units() { systemctl list-units 'bmbox-*' --all --no-legend --plain; }
+e2e_units() { units | grep -E " for $LAB(/[^ ]*)? *\$" | awk '{print $1}'; }
+other_units() { units | grep -vE " for $LAB(/[^ ]*)? *\$" | awk '{print $1, $3, $4}' | sort; }
+DHCP_UNIT=bmbox-$LAB-dnsmasq.service
+DHCP_DIR=/var/lib/bmbox/$LAB
+dhcp_active() { systemctl is-active --quiet "$DHCP_UNIT"; }
 # virsh pads --name output with trailing spaces: trim before comparing.
 pools() { vsh pool-list --all --name | awk 'NF {print $1}'; }
 e2e_pool() { pools | grep -x "bmbox-$LAB"; }
-leftovers() { { e2e_domains; e2e_bridges; e2e_units; e2e_pool; } | grep -c .; }
+leftovers() { { e2e_domains; e2e_bridges; e2e_units; e2e_pool; sudo ls -d "$DHCP_DIR" 2>/dev/null; } | grep -c .; }
 
 # Everything outside the e2e lab that bmbox could touch.
 host_snapshot() {
@@ -132,6 +153,7 @@ host_snapshot() {
 	echo "## pools"; pools | grep -vx "bmbox-$LAB" | sort
 	echo "## bridges"; other_bridges
 	echo "## bmbox units"; other_units
+	echo "## bmbox data"; sudo ls /var/lib/bmbox 2>/dev/null | grep -vx "$LAB"
 	echo "## sysctls"
 	for k in net.ipv4.ip_forward net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables; do
 		echo "$k=$(sysctl -n "$k" 2>/dev/null)"
@@ -153,7 +175,9 @@ ipmi() { ipmitool -I lanplus -H 127.0.0.1 -p "$IPMI_PORT" -U admin -P "${IPMI_PA
 is_power() { [ "$(power_state)" = "$1" ]; }
 
 console_to() { # file seconds: attach to n1 without input, keep the output
-	sudo timeout "$2" env BMBOX_HOME="$WS" "$BMBOX" console n1 --lab "$LAB" </dev/null >"$1" 2>&1
+	# Replay the whole boot: n1 has netbooted, the firmware lines are far
+	# above the default 20-line tail.
+	sudo timeout "$2" env BMBOX_HOME="$WS" "$BMBOX" console n1 --lab "$LAB" -n 5000 </dev/null >"$1" 2>&1
 	return 0
 }
 replay_is_clean() { # file: has a replay, and the replay (not live output) never clears
@@ -181,6 +205,7 @@ check "render n1 is UEFI q35 with a serial socket" \
 	bash -c "'$BMBOX' render n1 -f '$FULL' | grep -q 'type=\"pflash\"' && '$BMBOX' render n1 -f '$FULL' | grep -q 'serial type=\"unix\"'"
 
 section "up"
+T0=$(date +%s) # journal lines of this run only
 check "up succeeds" bm up -f "$FULL"
 check "both domains defined and shut off" \
 	bash -c "[ \"\$(sudo virsh -c $URI domstate bmbox-$LAB-n1)\" = 'shut off' ] && [ \"\$(sudo virsh -c $URI domstate bmbox-$LAB-n2)\" = 'shut off' ]"
@@ -194,6 +219,10 @@ check "both BMC units are active" \
 bm status --lab "$LAB" >"$TMP/status" 2>&1
 check "status lists n1" grep -q '^n1 ' "$TMP/status"
 check "status lists n2" grep -q '^n2 ' "$TMP/status"
+check "dnsmasq unit is active" dhcp_active
+check "status reports DHCP active" grep -q "^DHCP: active ($DHCP_UNIT)" "$TMP/status"
+check "TFTP root holds iPXE, script, kernel and initrd" \
+	bash -c "[ \"\$(sudo ls $DHCP_DIR/tftp | sort | tr '\n' ' ')\" = 'boot.ipxe initrd ipxe.efi vmlinuz ' ]"
 
 UUID1=$(node_state n1 "['uuid']")
 RF=$(node_state n1 "['bmc']['endpoint'].split('/Systems/')[0]")
@@ -209,6 +238,15 @@ check "Systems collection holds only this node" \
 check "PowerState is Off" is_power Off
 check "Reset On" reset On
 check "PowerState becomes On" wait_for 15 is_power On
+
+section "Netboot (n1)"
+n1_leased() { sudo env BMBOX_HOME="$WS" LIBVIRT_DEFAULT_URI="$URI" "$BMBOX" status --lab "$LAB" | grep -qE "^n1 +running +$N1_IP "; }
+served() { sudo journalctl -u "$DHCP_UNIT" --since "@$T0" --no-pager | grep -q "sent $DHCP_DIR/tftp/$1 to $N1_IP"; }
+check "n1 gets its fixed address $N1_IP (status)" wait_for 60 n1_leased
+check "firmware loads iPXE over TFTP" wait_for 30 served ipxe.efi
+ipxe_served() { served boot.ipxe && served vmlinuz && served initrd; }
+check "iPXE loads boot.ipxe, kernel and initrd" wait_for 60 ipxe_served
+check "the netbooted kernel prints on the serial console" wait_for 60 sudo grep -q "Linux version" "/run/bmbox/$LAB/n1.serial.log"
 
 section "console (n1)"
 console_to "$TMP/con1" 15
@@ -232,18 +270,20 @@ check "wrong password is rejected" bash -c '! IPMI_PASS=wrong ipmi power status'
 section "Convergence"
 bm up -f "$FULL" >"$TMP/up2" 2>&1
 check "second up succeeds" grep -q 'is up' "$TMP/up2"
-check "second up leaves running BMCs alone" \
-	bash -c "grep -q 'n1 *redfish *running' '$TMP/up2' && grep -q 'n2 *ipmi *running' '$TMP/up2' && ! grep -q started '$TMP/up2'"
+check "second up leaves running BMCs and dnsmasq alone" \
+	bash -c "grep -q 'n1 *redfish *running' '$TMP/up2' && grep -q 'n2 *ipmi *running' '$TMP/up2' && grep -q 'dnsmasq *running' '$TMP/up2' && ! grep -q started '$TMP/up2'"
 bm up -f "$SMALL" >"$TMP/up3" 2>&1
 check "smaller topology: orphans are reported" \
-	bash -c "grep -q 'node    n2' '$TMP/up3' && grep -q 'network data' '$TMP/up3' && grep -q 'volume  n1-disk1.qcow2' '$TMP/up3'"
+	bash -c "grep -q 'node    n2' '$TMP/up3' && grep -q 'network data' '$TMP/up3' && grep -q 'volume  n1-disk1.qcow2' '$TMP/up3' && grep -q 'dhcp    $DHCP_UNIT' '$TMP/up3'"
 check "orphans are kept without --prune" vsh domstate "bmbox-$LAB-n2"
 check "up --prune succeeds" bm up -f "$SMALL" --prune
 check "removed node is gone" bash -c "! sudo virsh -c $URI domstate bmbox-$LAB-n2"
 check "removed BMC unit is gone" bash -c "! systemctl is-active --quiet bmbox-$LAB-n2-bmc.service"
 check "removed disk is gone" bash -c "! sudo virsh -c $URI vol-list bmbox-$LAB | grep -q n1-disk1.qcow2"
 check "removed network's bridge is gone" bash -c "! ip -o link show type bridge | grep -qF 'alias bmbox:$LAB/data'"
+check "dnsmasq stopped and its data removed" bash -c "! systemctl is-active --quiet $DHCP_UNIT && ! sudo test -e $DHCP_DIR"
 check "back to the full topology" bm up -f "$FULL"
+check "dnsmasq is back" dhcp_active
 
 section "Locking"
 # Hold the lab lock from this shell on fd 9 (no child process can keep it).
