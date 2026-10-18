@@ -64,6 +64,18 @@ func (v *validator) boot(path string, boot []string) {
 	}
 }
 
+// ValidateLabName checks a lab name given outside a topology (e.g. --lab)
+// with the rules of metadata.name. Lab names become path components, so
+// this must pass before one is used.
+func ValidateLabName(name string) error {
+	v := &validator{}
+	v.name("lab name", name, maxLabNameLen)
+	if len(v.problems) > 0 {
+		return fmt.Errorf("%s", v.problems[0])
+	}
+	return nil
+}
+
 // Validate checks a defaulted topology. Call ApplyDefaults first.
 func (t *Topology) Validate() error {
 	v := &validator{}

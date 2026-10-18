@@ -211,3 +211,14 @@ spec:
 		t.Fatalf("expected external bridge error, got %v", err)
 	}
 }
+
+func TestValidateLabName(t *testing.T) {
+	if err := ValidateLabName("demo-1"); err != nil {
+		t.Errorf("demo-1: %v", err)
+	}
+	for _, bad := range []string{"", "..", "../..", "a/b", ".", "Demo", "-a"} {
+		if ValidateLabName(bad) == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
