@@ -20,12 +20,23 @@ var validateCmd = &cobra.Command{
 		fmt.Printf("%s: topology %q is valid\n\n", topologyFile, t.Metadata.Name)
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "NETWORK\tBRIDGE\tCIDR\tMTU\tEXTERNAL")
+		fmt.Fprintln(w, "NETWORK\tBRIDGE\tCIDR\tMTU\tEXTERNAL\tDHCP")
 		for _, n := range t.Spec.Networks {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%v\n", n.Name, n.Bridge, dash(n.CIDR), n.MTU, n.External)
+			dhcp := "-"
+			if n.DHCP != nil {
+				dhcp = n.DHCP.Range
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%v\t%s\n", n.Name, n.Bridge, dash(n.CIDR), n.MTU, n.External, dhcp)
 		}
 		w.Flush()
 		fmt.Println()
+		if nb := t.Spec.Netboot; nb != nil {
+			if nb.Script != "" {
+				fmt.Printf("Netboot: iPXE script %s\n\n", nb.Script)
+			} else {
+				fmt.Printf("Netboot: kernel %s, initrd %s, cmdline %q\n\n", nb.Kernel, dash(nb.Initrd), nb.Cmdline)
+			}
+		}
 
 		fmt.Fprintln(w, "NODE\tDOMAIN\tCPU\tMEMORY\tDISKS\tNICS\tBOOT\tBMC")
 		for _, n := range t.Spec.Nodes {
@@ -42,6 +53,9 @@ var validateCmd = &cobra.Command{
 					nics += ","
 				}
 				nics += nic.Network + "=" + nic.MAC
+				if nic.IP != "" {
+					nics += "/" + nic.IP
+				}
 			}
 			bmc := "-"
 			if n.BMC != nil {
