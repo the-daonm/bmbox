@@ -27,6 +27,9 @@ type Spec struct {
 	UEFI     UEFI         `yaml:"uefi"`
 	Networks []Network    `yaml:"networks"`
 	Nodes    []Node       `yaml:"nodes"`
+	// Netboot is what nodes boot over the network from the lab's DHCP
+	// networks. Without it, those networks only hand out addresses.
+	Netboot *Netboot `yaml:"netboot"`
 }
 
 // NodeDefaults are applied to every node that leaves the field unset.
@@ -63,6 +66,27 @@ type Network struct {
 	// host can act as gateway / provisioning server on that segment.
 	CIDR string `yaml:"cidr"`
 	MTU  int    `yaml:"mtu"`
+	// DHCP, when set, makes bmbox serve DHCP (and netboot) on the network
+	// from its gateway address. Requires CIDR (IPv4).
+	DHCP *DHCP `yaml:"dhcp"`
+}
+
+type DHCP struct {
+	// Range of dynamic addresses, "first-last". Defaults to every host
+	// address of the CIDR on the larger side of the gateway.
+	Range string `yaml:"range"`
+}
+
+// Netboot is served over TFTP: UEFI firmware loads iPXE, which runs either
+// a generated script booting Kernel/Initrd with Cmdline, or Script.
+type Netboot struct {
+	// Kernel and Initrd are absolute paths on the host (copied to the TFTP
+	// root) or http(s):// URLs iPXE fetches directly.
+	Kernel  string `yaml:"kernel"`
+	Initrd  string `yaml:"initrd"`
+	Cmdline string `yaml:"cmdline"`
+	// Script is a custom iPXE script (absolute path), instead of Kernel.
+	Script string `yaml:"script"`
 }
 
 type Node struct {
@@ -83,6 +107,8 @@ type NIC struct {
 	Network string `yaml:"network"`
 	// MAC is generated deterministically from lab/node/index when empty.
 	MAC string `yaml:"mac"`
+	// IP is a fixed DHCP address for the NIC, on a network with dhcp.
+	IP string `yaml:"ip"`
 }
 
 // BMC describes the out-of-band controller emulated for the node. Each node

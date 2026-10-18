@@ -80,6 +80,11 @@ func (t *Topology) ApplyDefaults() {
 		if n.MTU == 0 {
 			n.MTU = DefaultMTU
 		}
+		if n.DHCP != nil && n.DHCP.Range == "" {
+			if first, last, ok := defaultDHCPRange(n.CIDR); ok {
+				n.DHCP.Range = first.String() + "-" + last.String()
+			}
+		}
 	}
 
 	for i := range t.Spec.Nodes {
@@ -153,6 +158,22 @@ func (t *Topology) assignBMCPorts() {
 // BMCUnit is the systemd unit running a node's BMC.
 func (t *Topology) BMCUnit(node string) string {
 	return "bmbox-" + t.Metadata.Name + "-" + node + "-bmc.service"
+}
+
+// DHCPUnit is the systemd unit running the lab's dnsmasq.
+func (t *Topology) DHCPUnit() string {
+	return "bmbox-" + t.Metadata.Name + "-dnsmasq.service"
+}
+
+// DHCPNetworks are the networks bmbox serves DHCP on.
+func (t *Topology) DHCPNetworks() []Network {
+	var out []Network
+	for _, n := range t.Spec.Networks {
+		if n.DHCP != nil {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // DomainName is the libvirt domain name of a node.
