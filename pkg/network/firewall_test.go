@@ -28,7 +28,14 @@ func (f *fakeIPTables) run(_ string, args ...string) (string, error) {
 		}
 		out := "-N " + chain + "\n"
 		for _, r := range rules {
-			out += "-A " + chain + " " + r + "\n"
+			// Like iptables, quote comments in the listing.
+			fields := strings.Fields(r)
+			for i := range fields {
+				if i > 0 && fields[i-1] == "--comment" {
+					fields[i] = `"` + fields[i] + `"`
+				}
+			}
+			out += "-A " + chain + " " + strings.Join(fields, " ") + "\n"
 		}
 		return out, nil
 	case "-N":
