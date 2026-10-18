@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -25,10 +26,11 @@ var statusCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		st, nodes, err := engine.Status(context.Background(), lab, ws, engine.Options{LibvirtURI: libvirtURI})
+		ls, err := engine.Status(context.Background(), lab, ws, engine.Options{LibvirtURI: libvirtURI})
 		if err != nil {
 			return err
 		}
+		st := ls.State
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		fmt.Fprintf(w, "Lab %q (updated %s)\n\n", st.Lab, st.UpdatedAt.Local().Format("2006-01-02 15:04"))
@@ -36,10 +38,13 @@ var statusCmd = &cobra.Command{
 		for _, n := range st.Networks {
 			fmt.Fprintf(w, "%s\t%s\t%s\n", n.Name, n.Bridge, dash(n.Address))
 		}
+		if st.DHCP != nil {
+			fmt.Fprintf(w, "\nDHCP: %s (%s)\n", ls.DHCPState, st.DHCP.Unit)
+		}
 		fmt.Fprintln(w)
-		fmt.Fprintln(w, "NODE\tPOWER\tBMC\tBMC STATE\tENDPOINT")
-		for _, n := range nodes {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", n.Name, n.Power, n.BMCType, n.BMCState, n.Endpoint)
+		fmt.Fprintln(w, "NODE\tPOWER\tIP\tBMC\tBMC STATE\tENDPOINT")
+		for _, n := range ls.Nodes {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", n.Name, n.Power, dash(strings.Join(n.IPs, ",")), n.BMCType, n.BMCState, n.Endpoint)
 		}
 		return w.Flush()
 	},
