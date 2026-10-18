@@ -43,10 +43,19 @@ sudo -n true 2>/dev/null || sudo true || die "sudo is required"
 for f in "$KERNEL" "$INITRD"; do
 	sudo test -r "$f" || die "netboot file $f not found (set E2E_KERNEL / E2E_INITRD)"
 done
-N1_IP=$(python3 -c "import ipaddress,sys; print(ipaddress.ip_network(sys.argv[1], strict=False)[10])" "$CIDR")
+host_ip() { python3 -c "import ipaddress,sys; print(ipaddress.ip_network(sys.argv[1], strict=False)[int(sys.argv[2])])" "$CIDR" "$1"; }
+N1_IP=$(host_ip 10)
+EP_A=$(host_ip 200) # test endpoints on the pxe bridge (network namespaces)
+EP_B=$(host_ip 201)
+PXE_BR=bmb-$LAB-pxe
 
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
+# Test-only firewall rule and namespaces, removed however the run ends.
+fwd_cleanup() {
+	while sudo iptables -w -D FORWARD -i "$PXE_BR" -m comment --comment bmbox-e2e-drop -j DROP 2>/dev/null; do :; done
+	for n in a b; do sudo ip netns del "bmbox-e2e-$n" 2>/dev/null; done
+}
+trap 'fwd_cleanup; rm -rf "$TMP"' EXIT
 OUT=$TMP/out
 FULL=$TMP/full.yaml
 SMALL=$TMP/small.yaml
@@ -145,7 +154,8 @@ dhcp_active() { systemctl is-active --quiet "$DHCP_UNIT"; }
 # virsh pads --name output with trailing spaces: trim before comparing.
 pools() { vsh pool-list --all --name | awk 'NF {print $1}'; }
 e2e_pool() { pools | grep -x "bmbox-$LAB"; }
-leftovers() { { e2e_domains; e2e_bridges; e2e_units; e2e_pool; sudo ls -d "$DHCP_DIR" 2>/dev/null; } | grep -c .; }
+e2e_rules() { for t in iptables ip6tables; do sudo $t -w -S BMBOX-FORWARD 2>/dev/null | grep -F "bmbox:$LAB/"; done; }
+leftovers() { { e2e_domains; e2e_bridges; e2e_units; e2e_pool; sudo ls -d "$DHCP_DIR" 2>/dev/null; e2e_rules; } | grep -c .; }
 
 # Everything outside the e2e lab that bmbox could touch.
 host_snapshot() {
@@ -154,6 +164,11 @@ host_snapshot() {
 	echo "## bridges"; other_bridges
 	echo "## bmbox units"; other_units
 	echo "## bmbox data"; sudo ls /var/lib/bmbox 2>/dev/null | grep -vx "$LAB"
+	for t in iptables ip6tables; do
+		echo "## $t FORWARD"
+		sudo $t -w -S FORWARD 2>/dev/null
+		sudo $t -w -S BMBOX-FORWARD 2>/dev/null | grep -vF "bmbox:$LAB/"
+	done
 	echo "## sysctls"
 	for k in net.ipv4.ip_forward net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables; do
 		echo "$k=$(sysctl -n "$k" 2>/dev/null)"
@@ -274,16 +289,45 @@ check "second up leaves running BMCs and dnsmasq alone" \
 	bash -c "grep -q 'n1 *redfish *running' '$TMP/up2' && grep -q 'n2 *ipmi *running' '$TMP/up2' && grep -q 'dnsmasq *running' '$TMP/up2' && ! grep -q started '$TMP/up2'"
 bm up -f "$SMALL" >"$TMP/up3" 2>&1
 check "smaller topology: orphans are reported" \
-	bash -c "grep -q 'node    n2' '$TMP/up3' && grep -q 'network data' '$TMP/up3' && grep -q 'volume  n1-disk1.qcow2' '$TMP/up3' && grep -q 'dhcp    $DHCP_UNIT' '$TMP/up3'"
+	bash -c "grep -q 'node    n2' '$TMP/up3' && grep -q 'network data' '$TMP/up3' && grep -q 'volume  n1-disk1.qcow2' '$TMP/up3' && grep -q 'dhcp    $DHCP_UNIT' '$TMP/up3' && grep -q 'firewall rule for data' '$TMP/up3'"
 check "orphans are kept without --prune" vsh domstate "bmbox-$LAB-n2"
 check "up --prune succeeds" bm up -f "$SMALL" --prune
 check "removed node is gone" bash -c "! sudo virsh -c $URI domstate bmbox-$LAB-n2"
 check "removed BMC unit is gone" bash -c "! systemctl is-active --quiet bmbox-$LAB-n2-bmc.service"
 check "removed disk is gone" bash -c "! sudo virsh -c $URI vol-list bmbox-$LAB | grep -q n1-disk1.qcow2"
 check "removed network's bridge is gone" bash -c "! ip -o link show type bridge | grep -qF 'alias bmbox:$LAB/data'"
+check "removed network's firewall rule is gone" bash -c "! sudo iptables -w -S BMBOX-FORWARD 2>/dev/null | grep -qF 'bmbox:$LAB/data'"
 check "dnsmasq stopped and its data removed" bash -c "! systemctl is-active --quiet $DHCP_UNIT && ! sudo test -e $DHCP_DIR"
 check "back to the full topology" bm up -f "$FULL"
 check "dnsmasq is back" dhcp_active
+
+section "Forwarding (bridge-nf-call-iptables)"
+rule_args=(-i "$PXE_BR" -o "$PXE_BR" -m comment --comment "bmbox:$LAB/pxe" -j ACCEPT)
+check "FORWARD jumps to BMBOX-FORWARD" sudo iptables -w -C FORWARD -j BMBOX-FORWARD
+check "IPv4 rule accepts traffic within the pxe bridge" sudo iptables -w -C BMBOX-FORWARD "${rule_args[@]}"
+check "IPv6 rule accepts traffic within the pxe bridge" sudo ip6tables -w -C BMBOX-FORWARD "${rule_args[@]}"
+# Two endpoints on the lab bridge, and a DROP for the bridge's traffic at
+# the end of FORWARD: what a DROP policy does, without touching the host's.
+for n in a b; do
+	sudo ip netns add "bmbox-e2e-$n"
+	sudo ip link add "bmbx-e2e-$n" type veth peer name eth0 netns "bmbox-e2e-$n"
+	sudo ip link set "bmbx-e2e-$n" master "$PXE_BR" up
+	sudo ip -n "bmbox-e2e-$n" link set eth0 up
+done
+sudo ip -n bmbox-e2e-a addr add "$EP_A/${CIDR#*/}" dev eth0
+sudo ip -n bmbox-e2e-b addr add "$EP_B/${CIDR#*/}" dev eth0
+sudo iptables -w -A FORWARD -i "$PXE_BR" -m comment --comment bmbox-e2e-drop -j DROP
+ep_ping() { sudo ip netns exec bmbox-e2e-a ping -c2 -W1 "$EP_B"; }
+check "endpoints on the bridge reach each other despite the FORWARD drop" wait_for 5 ep_ping
+if [ "$(sysctl -n net.bridge.bridge-nf-call-iptables 2>/dev/null)" = 1 ]; then
+	sudo iptables -w -D BMBOX-FORWARD "${rule_args[@]}"
+	check "control: without bmbox's rule the same traffic is dropped" bash -c "! sudo ip netns exec bmbox-e2e-a ping -c2 -W1 $EP_B"
+	check "up restores the rule" bm up -f "$FULL"
+	check "traffic flows again" wait_for 5 ep_ping
+else
+	echo "SKIP  control check: bridge-nf-call-iptables is not 1 on this host"
+fi
+fwd_cleanup
 
 section "Locking"
 # Hold the lab lock from this shell on fd 9 (no child process can keep it).
