@@ -10,6 +10,7 @@ import (
 
 	"bmbox/pkg/bmc"
 	"bmbox/pkg/hypervisor"
+	"bmbox/pkg/netboot"
 	"bmbox/pkg/network"
 	"bmbox/pkg/systemd"
 	"bmbox/pkg/topology"
@@ -24,9 +25,10 @@ type discovered struct {
 	nodes   []string
 	units   map[string]string // node -> unit
 	bridges map[string]string // network -> bridge
+	dhcp    string            // the lab's dnsmasq unit, if loaded
 }
 
-func discover(ctx context.Context, lab string, hv *hypervisor.Client, m *bmc.Manager) (discovered, error) {
+func discover(ctx context.Context, lab string, hv *hypervisor.Client, sd *systemd.Manager) (discovered, error) {
 	d := discovered{units: map[string]string{}, bridges: map[string]string{}}
 	var errs []error
 	if hv != nil {
@@ -34,11 +36,17 @@ func discover(ctx context.Context, lab string, hv *hypervisor.Client, m *bmc.Man
 		errs = append(errs, err)
 		d.nodes = nodes
 	}
-	if m != nil {
-		units, err := m.LabUnits(ctx, lab)
+	if sd != nil {
+		units, err := bmc.NewManager(sd, bmc.Tools{}).LabUnits(ctx, lab)
 		errs = append(errs, err)
 		if units != nil {
 			d.units = units
+		}
+		unit := (&topology.Topology{Metadata: topology.Metadata{Name: lab}}).DHCPUnit()
+		found, err := sd.Units(ctx, unit)
+		errs = append(errs, err)
+		if found[unit] == netboot.Description(lab) {
+			d.dhcp = unit
 		}
 	}
 	bridges, err := network.LabBridges(lab)
@@ -158,13 +166,12 @@ func Destroy(ctx context.Context, lab string, t *topology.Topology, ws *workspac
 		log("    error: %v", err)
 	}
 
-	var m *bmc.Manager
 	sd, err := systemd.Connect(ctx)
 	if err != nil {
 		fail(err)
+		sd = nil
 	} else {
 		defer sd.Close()
-		m = bmc.NewManager(sd, bmc.Tools{})
 	}
 	hv, err := hypervisor.Connect(opt.LibvirtURI)
 	if err != nil {
@@ -173,11 +180,11 @@ func Destroy(ctx context.Context, lab string, t *topology.Topology, ws *workspac
 	} else {
 		defer hv.Close()
 	}
-	d, err := discover(ctx, lab, hv, m)
+	d, err := discover(ctx, lab, hv, sd)
 	if err != nil {
 		fail(err)
 	}
-	if st == nil && t == nil && len(d.nodes) == 0 && len(d.units) == 0 && len(d.bridges) == 0 {
+	if st == nil && t == nil && len(d.nodes) == 0 && len(d.units) == 0 && len(d.bridges) == 0 && d.dhcp == "" {
 		if st == nil {
 			_ = ws.RemoveLab(lab) // only the lock we just created
 		}
@@ -186,17 +193,26 @@ func Destroy(ctx context.Context, lab string, t *topology.Topology, ws *workspac
 	p := planDestroy(lab, t, st, d)
 
 	log("==> BMCs")
-	if m != nil {
+	if sd != nil {
 		for _, n := range p.nodes {
 			unit := names.BMCUnit(n)
-			if s := m.State(ctx, unit); s == "inactive" || s == "unknown" {
+			if s := sd.State(ctx, unit); s == "inactive" || s == "unknown" {
 				continue
 			}
-			if err := m.Stop(ctx, unit); err != nil {
+			if err := sd.Stop(ctx, unit); err != nil {
 				fail(err)
 				continue
 			}
 			log("    %-10s stopped %s", n, unit)
+		}
+	}
+
+	log("==> DHCP")
+	if sd != nil {
+		if err := stopNetboot(ctx, sd, lab, d.dhcp); err != nil {
+			fail(err)
+		} else if d.dhcp != "" {
+			log("    dnsmasq    stopped %s", d.dhcp)
 		}
 	}
 

@@ -8,11 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"bmbox/pkg/bmc"
 	"bmbox/pkg/hypervisor"
+	"bmbox/pkg/netboot"
 	"bmbox/pkg/network"
 	"bmbox/pkg/systemd"
 	"bmbox/pkg/topology"
@@ -23,12 +26,19 @@ import (
 // libvirtd even when it runs in a container.
 const SerialRoot = "/run/bmbox"
 
+// DataRoot holds per-lab host data that must outlive a reboot and be
+// readable by unprivileged daemons: dnsmasq's config, leases and TFTP root.
+const DataRoot = "/var/lib/bmbox"
+
 type Options struct {
 	LibvirtURI string
 	Out        io.Writer
 	// SushyEmulator / VBMC override where the BMC tools are found.
 	SushyEmulator string
 	VBMC          string
+	// Dnsmasq / IPXE override where the netboot programs are found.
+	Dnsmasq string
+	IPXE    string
 	// Prune makes up remove resources of the lab that are no longer in the
 	// topology; without it they are only reported.
 	Prune bool
@@ -42,6 +52,9 @@ func SerialSocket(lab, node string) string {
 func SerialLog(lab, node string) string {
 	return filepath.Join(SerialRoot, lab, node+".serial.log")
 }
+
+// NetbootDir holds the lab's dnsmasq config, leases and TFTP root.
+func NetbootDir(lab string) string { return filepath.Join(DataRoot, lab) }
 
 func DiskVolumeName(node string, i int) string { return fmt.Sprintf("%s-disk%d.qcow2", node, i) }
 func NVRAMVolumeName(node string) string       { return node + "-VARS.fd" }
@@ -78,6 +91,34 @@ func BMCSpec(t *topology.Topology, n *topology.Node, uuid, loader, libvirtURI st
 		Unit: t.BMCUnit(n.Name),
 		Dir:  ws.BMCDir(t.Metadata.Name, n.Name),
 	}
+}
+
+// NetbootSpec maps the lab's DHCP networks and netboot onto pkg/netboot
+// inputs. Every NIC on a DHCP network gets its node's name as hostname.
+func NetbootSpec(t *topology.Topology) netboot.Spec {
+	lab := t.Metadata.Name
+	s := netboot.Spec{Lab: lab, Unit: t.DHCPUnit(), Dir: NetbootDir(lab)}
+	for _, n := range t.DHCPNetworks() {
+		gw, _ := topology.ParseGateway(n.CIDR)
+		first, last, _ := topology.ParseRange(n.DHCP.Range)
+		s.Networks = append(s.Networks, netboot.Network{Name: n.Name, Bridge: n.Bridge, Gateway: gw, First: first, Last: last})
+	}
+	for _, node := range t.Spec.Nodes {
+		for _, nic := range node.NICs {
+			if n := t.Network(nic.Network); n == nil || n.DHCP == nil {
+				continue
+			}
+			h := netboot.Host{MAC: nic.MAC, Name: node.Name}
+			if nic.IP != "" {
+				h.IP, _ = netip.ParseAddr(nic.IP)
+			}
+			s.Hosts = append(s.Hosts, h)
+		}
+	}
+	if nb := t.Spec.Netboot; nb != nil {
+		s.Boot = &netboot.Boot{Kernel: nb.Kernel, Initrd: nb.Initrd, Cmdline: nb.Cmdline, Script: nb.Script}
+	}
+	return s
 }
 
 // Up brings the lab to the declared state: bridges exist, every node is
@@ -145,6 +186,10 @@ func Up(ctx context.Context, t *topology.Topology, raw []byte, ws *workspace.Wor
 	}
 	defer sd.Close()
 	bmcs, err := preflightBMCs(ctx, t, specs, sd, opt)
+	if err != nil {
+		return st, err
+	}
+	dhcp, err := preflightNetboot(t, sd, opt)
 	if err != nil {
 		return st, err
 	}
@@ -257,14 +302,21 @@ func Up(ctx context.Context, t *topology.Topology, raw []byte, ws *workspace.Wor
 		log("    %-10s %-24s %-8s %s", n.Name, ns.Domain, ns.State, action)
 	}
 
-	// 4. BMCs
+	// 4. DHCP and netboot, before anything can power the nodes on
+	if dhcp != nil {
+		if err := ensureNetboot(ctx, t, st, dhcp, log); err != nil {
+			return st, err
+		}
+	}
+
+	// 5. BMCs
 	if bmcs != nil {
 		if err := ensureBMCs(ctx, t, st, bmcs, fw.Loader, ws, opt, log); err != nil {
 			return st, err
 		}
 	}
 
-	// 5. Resources of this lab that are no longer in the topology
+	// 6. Resources of this lab that are no longer in the topology
 	return st, reconcile(ctx, t, hv, sd, opt, log)
 }
 
@@ -340,6 +392,58 @@ func preflightBMCs(ctx context.Context, t *topology.Topology, nets []network.Bri
 	return m, nil
 }
 
+// preflightNetboot locates dnsmasq (and iPXE when nodes netboot) and checks
+// the boot files exist. It returns nil when the lab has no DHCP network.
+func preflightNetboot(t *topology.Topology, sd *systemd.Manager, opt Options) (*netboot.Manager, error) {
+	if len(t.DHCPNetworks()) == 0 {
+		return nil, nil
+	}
+	nb := t.Spec.Netboot
+	tools, err := netboot.FindTools(opt.Dnsmasq, opt.IPXE, nb != nil)
+	if err != nil {
+		return nil, err
+	}
+	if nb != nil {
+		for _, f := range []string{nb.Kernel, nb.Initrd, nb.Script} {
+			if f == "" || strings.Contains(f, "://") {
+				continue
+			}
+			if fi, err := os.Stat(f); err != nil {
+				return nil, fmt.Errorf("netboot: %w", err)
+			} else if !fi.Mode().IsRegular() {
+				return nil, fmt.Errorf("netboot: %s is not a regular file", f)
+			}
+		}
+	}
+	return netboot.NewManager(sd, tools), nil
+}
+
+func ensureNetboot(ctx context.Context, t *topology.Topology, st *workspace.LabState, m *netboot.Manager, log func(string, ...any)) error {
+	log("==> DHCP")
+	spec := NetbootSpec(t)
+	st.DHCP = &workspace.DHCPState{Unit: spec.Unit, Dir: spec.Dir, LeaseFile: spec.LeaseFile()}
+	res, err := m.Ensure(ctx, spec)
+	if err != nil {
+		return err
+	}
+	for _, n := range spec.Networks {
+		log("    %-10s %-15s %s-%s", n.Name, n.Bridge, n.First, n.Last)
+	}
+	if nb := t.Spec.Netboot; nb != nil {
+		what := nb.Script
+		if what == "" {
+			what = nb.Kernel
+		}
+		log("    netboot    %s", what)
+	}
+	action := "running"
+	if res.Started {
+		action = "started"
+	}
+	log("    dnsmasq    %s %s", action, spec.Unit)
+	return nil
+}
+
 // mergePrevious adds the networks, nodes and pool of a previous state that a
 // failed run did not get to refresh.
 func mergePrevious(st, prev *workspace.LabState) {
@@ -365,6 +469,9 @@ func mergePrevious(st, prev *workspace.LabState) {
 	}
 	if st.Pool.Name == "" {
 		st.Pool = prev.Pool
+	}
+	if st.DHCP == nil {
+		st.DHCP = prev.DHCP
 	}
 }
 
