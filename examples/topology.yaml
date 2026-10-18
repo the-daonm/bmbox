@@ -1,5 +1,5 @@
 # bmbox topology: two UEFI "bare-metal" nodes on an isolated PXE network
-# plus a separate data network.
+# (with DHCP from bmbox) plus a separate data network.
 apiVersion: bmbox.io/v1alpha1
 kind: Topology
 metadata:
@@ -22,7 +22,15 @@ spec:
   networks:
     - name: pxe
       cidr: 172.30.10.0/24   # host gets 172.30.10.1 on the bridge
+      dhcp: {}               # bmbox's dnsmasq hands out 172.30.10.2-254
     - name: data             # pure L2 segment, no host address
+
+  # What PXE-booting nodes boot (via iPXE). Without it, DHCP only hands out
+  # addresses and PXE falls through to the disk.
+  # netboot:
+  #   kernel: /srv/netboot/vmlinuz      # absolute path or http(s) URL
+  #   initrd: /srv/netboot/initrd.img
+  #   cmdline: console=ttyS0
 
   nodes:
     - name: node1
@@ -32,6 +40,7 @@ spec:
         - size: 10GiB
       nics:
         - network: pxe
+          ip: 172.30.10.11     # fixed DHCP address
         - network: data
       bmc:
         type: redfish
