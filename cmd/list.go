@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -16,6 +17,10 @@ var listCmd = &cobra.Command{
 	Short:   "List the labs in the workspace",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		asJSON, err := jsonOutput()
+		if err != nil {
+			return err
+		}
 		ws, err := workspace.Open()
 		if err != nil {
 			return err
@@ -23,6 +28,18 @@ var listCmd = &cobra.Command{
 		labs, err := ws.Labs()
 		if err != nil {
 			return err
+		}
+		if asJSON {
+			out := []labJSON{}
+			for _, lab := range labs {
+				l := labJSON{Name: lab, Dir: ws.LabDir(lab)}
+				if st, err := ws.LoadState(lab); err == nil && st != nil {
+					l.Nodes, l.Networks = len(st.Nodes), len(st.Networks)
+					l.UpdatedAt = st.UpdatedAt.UTC().Format(time.RFC3339)
+				}
+				out = append(out, l)
+			}
+			return printJSON(out)
 		}
 		if len(labs) == 0 {
 			fmt.Printf("No labs in %s\n", ws.Root)
@@ -42,4 +59,15 @@ var listCmd = &cobra.Command{
 	},
 }
 
-func init() { rootCmd.AddCommand(listCmd) }
+type labJSON struct {
+	Name      string `json:"name"`
+	Nodes     int    `json:"nodes"`
+	Networks  int    `json:"networks"`
+	UpdatedAt string `json:"updatedAt,omitempty"` // empty: no state
+	Dir       string `json:"dir"`
+}
+
+func init() {
+	addOutputFlag(listCmd)
+	rootCmd.AddCommand(listCmd)
+}

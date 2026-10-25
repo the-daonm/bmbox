@@ -13,15 +13,18 @@ import (
 	"bmbox/pkg/workspace"
 )
 
+// NodeStatus is the live state of a node. The JSON form is part of the
+// CLI's interface (status --output json): add fields, do not rename them.
 type NodeStatus struct {
-	Name     string
-	Domain   string
-	Power    string
-	IPs      []string // current DHCP leases of the node's NICs
-	BMCType  string
-	BMCState string
-	Endpoint string
-	Console  string
+	Name     string   `json:"name"`
+	Domain   string   `json:"domain"`
+	Power    string   `json:"power"`
+	IPs      []string `json:"ips"` // current DHCP leases of the node's NICs
+	MACs     []string `json:"macs"`
+	BMCType  string   `json:"bmcType,omitempty"`
+	BMCState string   `json:"bmcState,omitempty"`
+	Endpoint string   `json:"bmcEndpoint,omitempty"`
+	Console  string   `json:"console"`
 }
 
 type LabStatus struct {
@@ -70,7 +73,7 @@ func Status(ctx context.Context, lab string, ws *workspace.Workspace, opt Option
 	}
 
 	for _, n := range st.Nodes {
-		ns := NodeStatus{Name: n.Name, Domain: n.Domain, BMCType: "-", BMCState: "-", Endpoint: "-", Console: n.SerialSocket}
+		ns := NodeStatus{Name: n.Name, Domain: n.Domain, MACs: n.MACs, IPs: []string{}, Console: n.SerialSocket}
 		if ns.Power, err = hv.NodeState(n.Domain); err != nil {
 			ns.Power = "error: " + err.Error()
 		}
