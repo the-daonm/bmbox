@@ -22,7 +22,7 @@ jobs:
         run: go test -race ./...
       - name: Build
         run: make build && bin/bmbox --version
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bmbox
           path: bin/bmbox
