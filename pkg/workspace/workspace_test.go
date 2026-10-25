@@ -37,3 +37,31 @@ func TestToolsRoundTrip(t *testing.T) {
 		t.Errorf("LoadTools = %+v", got)
 	}
 }
+
+func TestStateVersion(t *testing.T) {
+	ws := &Workspace{Root: t.TempDir(), uid: -1, gid: -1}
+	if err := ws.SaveState(&LabState{Lab: "lab1"}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := ws.LoadState("lab1")
+	if err != nil || st.Version != StateVersion {
+		t.Fatalf("saved state: %+v, %v", st, err)
+	}
+
+	// A state from before versioning loads as the current version.
+	if err := ws.WriteFile(ws.statePath("old"), []byte(`{"lab":"old","nodes":[{"name":"n1"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	st, err = ws.LoadState("old")
+	if err != nil || st.Version != StateVersion || len(st.Nodes) != 1 {
+		t.Fatalf("unversioned state: %+v, %v", st, err)
+	}
+
+	// A state from a newer bmbox is refused.
+	if err := ws.WriteFile(ws.statePath("new"), []byte(`{"version":99,"lab":"new"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.LoadState("new"); err == nil || !strings.Contains(err.Error(), "newer bmbox") {
+		t.Fatalf("newer state: %v", err)
+	}
+}

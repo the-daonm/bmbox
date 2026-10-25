@@ -133,9 +133,16 @@ func (w *Workspace) write(path string, data []byte, mode os.FileMode) error {
 	return os.Rename(tmp, path)
 }
 
+// StateVersion is the format of state.json written by this bmbox. Files
+// without a version are version 0, which differs only by the missing field.
+// Bump it when a change needs older files converted, and convert them in
+// upgradeState.
+const StateVersion = 1
+
 // LabState is persisted after each successful `up` and is what `destroy`
 // will use to tear the lab down.
 type LabState struct {
+	Version   int            `json:"version"`
 	Lab       string         `json:"lab"`
 	UpdatedAt time.Time      `json:"updatedAt"`
 	Libvirt   string         `json:"libvirt"`
@@ -212,10 +219,26 @@ func (w *Workspace) LoadState(lab string) (*LabState, error) {
 	if err := json.Unmarshal(b, &s); err != nil {
 		return nil, fmt.Errorf("corrupt %s: %w", w.statePath(lab), err)
 	}
+	if err := upgradeState(&s); err != nil {
+		return nil, fmt.Errorf("%s: %w", w.statePath(lab), err)
+	}
 	return &s, nil
 }
 
+// upgradeState converts a state read from disk to StateVersion. A state
+// from a newer bmbox is refused: acting on fields this version does not
+// know could leave resources behind.
+func upgradeState(s *LabState) error {
+	if s.Version > StateVersion {
+		return fmt.Errorf("state format %d was written by a newer bmbox (this one reads up to %d); upgrade bmbox", s.Version, StateVersion)
+	}
+	// 0 -> 1: only the version field was added.
+	s.Version = StateVersion
+	return nil
+}
+
 func (w *Workspace) SaveState(s *LabState) error {
+	s.Version = StateVersion
 	s.UpdatedAt = time.Now().UTC()
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
