@@ -44,3 +44,15 @@ func TestStatusJSONShape(t *testing.T) {
 		t.Errorf("empty lab: %s", b)
 	}
 }
+
+func TestVersionString(t *testing.T) {
+	defer func(v, c, d string) { version, commit, date = v, c, d }(version, commit, date)
+	version, commit, date = "0.1.0", "", ""
+	if got := versionString(); got != "0.1.0" {
+		t.Errorf("plain: %q", got)
+	}
+	commit, date = "abc1234", "2026-10-26T00:00:00Z"
+	if got := versionString(); got != "0.1.0 (commit abc1234, built 2026-10-26T00:00:00Z)" {
+		t.Errorf("full: %q", got)
+	}
+}

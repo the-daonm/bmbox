@@ -1,6 +1,9 @@
 # bmbox builds for linux/amd64: its domains are x86_64 (q35 + OVMF).
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -s -w -X github.com/the-daonm/bmbox/cmd.version=$(VERSION)
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null)
+DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+PKG     := github.com/the-daonm/bmbox/cmd
+LDFLAGS := -s -w -X $(PKG).version=$(VERSION) -X $(PKG).commit=$(COMMIT) -X $(PKG).date=$(DATE)
 GO      ?= go
 NFPM    := $(GO) run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
 STATICCHECK := $(GO) run honnef.co/go/tools/cmd/staticcheck@v0.8.2

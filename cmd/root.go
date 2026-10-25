@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -13,7 +14,28 @@ import (
 	"github.com/the-daonm/bmbox/pkg/topology"
 )
 
-var version = "dev"
+// Set at build time (see the Makefile).
+var (
+	version = "dev"
+	commit  = ""
+	date    = ""
+)
+
+// versionString is what --version prints after "bmbox version".
+func versionString() string {
+	v := version
+	var extra []string
+	if commit != "" {
+		extra = append(extra, "commit "+commit)
+	}
+	if date != "" {
+		extra = append(extra, "built "+date)
+	}
+	if len(extra) > 0 {
+		v += " (" + strings.Join(extra, ", ") + ")"
+	}
+	return v
+}
 
 var (
 	topologyFile string
@@ -31,7 +53,7 @@ declarative topology.yaml: Linux bridges for the networks, libvirt domains
 for the nodes, and emulated BMCs for out-of-band control.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
-	Version:       version,
+	Version:       versionString(),
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		if quiet && verbose {
 			return fmt.Errorf("--quiet and --verbose cannot be used together")
