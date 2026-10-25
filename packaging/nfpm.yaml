@@ -4,7 +4,7 @@ arch: amd64
 platform: linux
 version: ${VERSION}
 version_schema: none
-maintainer: daonm <144655574+the-daonm@users.noreply.github.com>
+maintainer: bmbox maintainers <the-daonm@users.noreply.github.com>
 description: |
   Declarative virtualized bare-metal testbed engine: KVM + UEFI nodes,
   bridges, DHCP/iPXE netboot and Redfish/IPMI BMCs from a topology file.

@@ -6,5 +6,7 @@ This project follows the
 In short: be respectful and constructive, assume good intent, and make
 participation harassment-free for everyone.
 
-Report unacceptable behaviour privately to the maintainer,
-144655574+the-daonm@users.noreply.github.com. Reports are handled confidentially.
+Report unacceptable behaviour privately to the maintainers through
+GitHub's private reporting (**Security → Report a vulnerability** on the
+repository), noting that it is a conduct report. Reports are handled
+confidentially.
