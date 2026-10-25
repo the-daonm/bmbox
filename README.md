@@ -1,48 +1,196 @@
 # bmbox
 
-Declarative virtualized bare-metal testbed engine: describe a lab of
-"bare-metal" servers (KVM + UEFI) in `topology.yaml`, and bmbox builds the
-Linux bridges, storage and libvirt domains for it.
+[![ci](https://github.com/the-daonm/bmbox/actions/workflows/ci.yml/badge.svg)](https://github.com/the-daonm/bmbox/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-## Status
+**Virtual bare-metal labs from a single YAML file.**
 
-| Week | Scope | State |
-|------|-------|-------|
-| 3 | CLI, topology parser/validation, bridges via netlink, libvirt domains (UEFI, serial socket), storage pool + per-node NVRAM, workspace | done |
-| 4 | Per-node BMCs (Redfish via sushy-tools, IPMI via virtualbmc) as systemd units, `bmbox destroy`, `bmbox status`, `bmbox console` | done |
-| 5 | Per-lab DHCP and iPXE netboot (dnsmasq); node-to-node traffic under `bridge-nf-call-iptables` | done |
-| 5 | Ironic export, BMC TLS and generated passwords, CI | planned |
+bmbox builds a lab of "bare-metal" servers on one Linux host: KVM + UEFI
+virtual machines that PXE boot, with a dedicated Redfish or IPMI BMC each,
+on their own networks with DHCP and iPXE. Use it to develop and test
+provisioning systems (OpenStack Ironic, Metal3, MAAS, Tinkerbell, your own
+tooling) without racks of hardware.
 
-## Usage
+```yaml
+apiVersion: bmbox.io/v1alpha1
+kind: Topology
+metadata:
+  name: demo
+spec:
+  networks:
+    - name: pxe
+      cidr: 172.30.10.0/24
+      dhcp: {}
+  nodes:
+    - name: node1
+      nics: [{network: pxe}]
+      bmc: {type: redfish}
+```
+
+```console
+$ sudo bmbox up -f topology.yaml
+$ sudo bmbox credentials
+NODE   TYPE     USERNAME  PASSWORD          ENDPOINT
+node1  redfish  admin     q7XkM2pR9vTb3nWc  https://127.0.0.1:8300/redfish/v1/Systems/...
+```
+
+## Features
+
+- **Declarative.** `up` converges the host to `topology.yaml` and can be run
+  again at any time. Disks and NVRAM are kept, and what was removed from the
+  file is reported (or deleted with `--prune`).
+- **Real server behaviour.** UEFI (OVMF) with per-node NVRAM, PXE first then
+  disk, sparse qcow2 disks, stable MACs, and a serial console with
+  history.
+- **One BMC per node.** Redfish (sushy-tools) over HTTPS, or IPMI
+  (virtualbmc). Each BMC only controls its own node. Passwords are generated
+  unless you set them.
+- **Networks.** Linux bridges, optional host address, DHCP with fixed
+  addresses, and netboot of a kernel and initrd or your own iPXE script.
+  Existing bridges, such as an Ironic provisioning network, can be attached
+  as external networks.
+- **Survives reboots.** A boot unit brings every lab back after the host
+  restarts.
+- **Plays well with the host.** Everything bmbox creates is tagged as its
+  own, and `destroy` removes only that. It keeps traffic flowing when Docker
+  or Neutron set the `FORWARD` policy to `DROP`. Several labs can share a
+  host.
+- **Scriptable.** `--output json` for status, list, credentials and doctor,
+  and timestamped logs outside a terminal.
+
+## Requirements
+
+- Linux on x86_64 with KVM (`/dev/kvm`) and systemd
+- libvirt (`qemu:///system`), QEMU and OVMF
+- For BMCs: Python 3 (bmbox installs sushy-tools and virtualbmc itself)
+- For DHCP and netboot: dnsmasq and iPXE
+
+`bmbox setup` installs all of these on Debian, Ubuntu, Fedora, RHEL and
+Arch.
+
+## Install
+
+From a [release](https://github.com/the-daonm/bmbox/releases), as a
+package:
 
 ```bash
-go build -o bin/bmbox .
+sudo apt install ./bmbox_<version>_amd64.deb     # Debian, Ubuntu
+sudo dnf install ./bmbox-<version>-1.x86_64.rpm  # Fedora, RHEL
+```
 
-bmbox validate -f examples/topology.yaml   # parse + validate
-bmbox render node1 -f examples/topology.yaml   # print domain XML (offline)
-sudo bmbox up -f examples/topology.yaml    # bridges, disks, NVRAM, domains (SHUTOFF), DHCP, BMCs
-sudo bmbox up --prune                      # also remove what was dropped from the topology
-sudo bmbox status                          # power state, DHCP lease, BMC endpoints
-bmbox list                                 # labs in the workspace
-sudo bmbox console node1                   # serial console (Ctrl-] to detach)
+or with Go (1.27+):
+
+```bash
+go install github.com/the-daonm/bmbox@latest
+sudo install ~/go/bin/bmbox /usr/local/bin/bmbox
+```
+
+Then prepare the host and check it:
+
+```bash
+sudo bmbox setup     # packages, libvirt, BMC emulators; --dry-run to preview
+sudo bmbox doctor    # KVM, libvirt, firmware, tools, labs: what is missing and how to fix it
+```
+
+`setup` only installs what is missing and can be run again. It puts
+sushy-tools and virtualbmc, at the versions bmbox is tested with, in a
+virtualenv under `/var/lib/bmbox/tools/venv`, and remembers every tool
+path. Install bmbox in a system path such as `/usr/local/bin`, because the
+boot units run that binary.
+
+## Quick start
+
+```bash
+sudo bmbox up -f examples/topology.yaml    # networks, disks, nodes (off), DHCP, BMCs
+sudo bmbox status                          # power, DHCP addresses, BMC state
+sudo bmbox credentials                     # BMC endpoints, users, passwords, CA
+
+# Power node1 on through its BMC, like a real server:
+CA=/var/lib/bmbox/ca/ca.crt
+curl --cacert $CA -u admin:PASSWORD -H 'Content-Type: application/json' \
+  -X POST -d '{"ResetType":"On"}' \
+  https://127.0.0.1:8300/redfish/v1/Systems/<uuid>/Actions/ComputerSystem.Reset
+ipmitool -I lanplus -H 127.0.0.1 -p 6231 -U admin -P PASSWORD power on   # node2
+
+sudo bmbox console node1                   # serial console, Ctrl-] to detach
 sudo bmbox destroy                         # remove everything up created
 ```
 
-BMCs need [sushy-tools](https://opendev.org/openstack/sushy-tools) (Redfish)
-and/or [virtualbmc](https://opendev.org/openstack/virtualbmc) (IPMI). sudo
-resets `PATH`, so point bmbox at them with `BMBOX_SUSHY_EMULATOR` /
-`BMBOX_VBMC` (or `--sushy-emulator` / `--vbmc`), e.g.
-`sudo BMBOX_SUSHY_EMULATOR=~/venv/bin/sushy-emulator BMBOX_VBMC=~/venv/bin/vbmc bmbox up`.
-The paths are remembered in `~/.bmbox/tools.json`, so later runs need no
-variables.
+`bmbox validate -f FILE` checks a topology and `bmbox render NODE -f FILE`
+prints the libvirt domain XML, both offline.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `setup` | Install and configure what bmbox needs on this host |
+| `doctor` | Check the host and every lab, with fixes |
+| `validate` | Parse and validate a topology |
+| `render [NODE]` | Print the domain XML bmbox would define |
+| `up` | Create or update a lab (`--prune` removes what left the topology) |
+| `status` | Power state, DHCP leases and BMC health of each node |
+| `credentials [NODE]` | BMC endpoint, username, password and CA |
+| `console NODE` | Attach to a node's serial console |
+| `list` | Labs on this host |
+| `destroy` | Remove everything `up` created for a lab |
+
+Global flags: `-f/--file` topology (default `topology.yaml`),
+`-c/--connect` libvirt URI (default `$LIBVIRT_DEFAULT_URI` or
+`qemu:///system`), `-q/--quiet`, `-v/--verbose` (prints the iptables, systemd
+and libvirt calls). Commands that act on an existing lab take `--lab NAME`
+instead of a file. `up --lab NAME` re-applies the topology the lab was last
+brought up with.
+
+## Topology
+
+Everything except names has a default. See
+[examples/topology.yaml](examples/topology.yaml) for a commented example.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `metadata.name` | required | Lab name, prefix of everything bmbox creates |
+| `spec.defaults` | 2 CPUs, 4 GiB, one 20 GiB disk, boot `[network, disk]` | Node defaults |
+| `spec.storage.path` | `/var/lib/libvirt/bmbox/<lab>` | Disks and NVRAM (a libvirt `dir` pool) |
+| `spec.uefi.loader`, `varsTemplate` | asked from libvirt | OVMF images |
+| `spec.autostart` | `true` | Bring the lab back when the host boots |
+| `networks[].bridge` | `bmb-<lab>-<net>` | Bridge name |
+| `networks[].external` | `false` | Attach to an existing bridge that bmbox never changes |
+| `networks[].cidr` | none | Gives the host the first address, as gateway or provisioning server |
+| `networks[].dhcp` | off | `{}` or `{range: first-last}`: DHCP from bmbox (IPv4) |
+| `netboot` | none | `kernel`, `initrd`, `cmdline`, or your own iPXE `script` |
+| `nodes[].cpus`, `memory`, `disks`, `boot` | from `defaults` | Node hardware |
+| `nodes[].nics[]` | | `network`, `mac` (stable default), `ip` (fixed DHCP address) |
+| `nodes[].bmc.type` | `redfish` | `redfish` or `ipmi` |
+| `nodes[].bmc.address`, `port` | `127.0.0.1`, 8300+ / 6330+ | Where the BMC listens |
+| `nodes[].bmc.username` | `admin` | |
+| `nodes[].bmc.password` / `passwordFile` / `passwordEnv` | generated | See [BMCs](#bmcs) |
+| `nodes[].bmc.tls` | `true` for Redfish | Serve Redfish over HTTPS |
+
+## BMCs
+
+Each node with a `bmc` gets its own emulated BMC, running as the systemd
+unit `bmbox-<lab>-<node>-bmc.service`:
+
+- **Redfish** (sushy-tools) only exposes its own node. It is served over
+  HTTPS with a certificate from bmbox's CA. Trust
+  `/var/lib/bmbox/ca/ca.crt` (one CA per host, for every lab), or set
+  `tls: false` for plain HTTP. `up` reissues certificates before they
+  expire.
+- **IPMI** (virtualbmc) speaks IPMI 2.0 (`lanplus`). Passwords are limited
+  to 20 characters.
+
+Passwords: without one in the topology, `up` generates a random password per
+node and keeps it. `passwordFile: /path` or `passwordEnv: VAR` keep it out of
+the topology. The value is stored too, so a later `up` without the variable
+(at boot, for instance) keeps working. `sudo bmbox credentials` shows them.
+BMCs listen on `127.0.0.1` unless `address` says otherwise.
 
 ## DHCP and netboot
 
 A network with `dhcp: {}` (it needs a `cidr`) gets DHCP from bmbox: one
-dnsmasq per lab, running as the systemd unit `bmbox-<lab>-dnsmasq.service`,
-answers on the lab bridges only. A NIC can have a fixed address (`ip:`).
-With `spec.netboot`, nodes that PXE boot get iPXE, then a generated
-`boot.ipxe` that boots the given kernel and initrd:
+dnsmasq per lab, as `bmbox-<lab>-dnsmasq.service`, answering on the lab's
+bridges only. With `spec.netboot`, nodes that PXE boot get iPXE and then a
+generated `boot.ipxe` that boots the kernel and initrd:
 
 ```yaml
 networks:
@@ -59,88 +207,97 @@ nodes:
     nics: [{network: pxe, ip: 172.30.10.10}]
 ```
 
-Config, leases and the TFTP root are kept in `/var/lib/bmbox/<lab>`.
-Because dnsmasq binds only the lab bridges (`bind-interfaces`), it can run
-next to libvirt's or Ironic's dnsmasq. Do not enable `dhcp` on a network
-where another DHCP server already answers, such as an Ironic provisioning
-network.
+Config, leases and the TFTP root live in `/var/lib/bmbox/<lab>`. dnsmasq
+binds only the lab bridges, so it can run next to libvirt's or Ironic's
+dnsmasq. Do not enable `dhcp` on a network where another DHCP server
+already answers, such as an Ironic provisioning network.
 
-You need dnsmasq (the `dnsmasq-base` package is enough) and the iPXE UEFI
-binary (`ipxe` package: `/usr/lib/ipxe/snponly.efi`). They can also be
-given with `BMBOX_DNSMASQ` / `BMBOX_IPXE` or `--dnsmasq` / `--ipxe`, and
-are remembered like the BMC tools. They do not have to be installed
-system-wide: `apt-get download dnsmasq-base ipxe` followed by `dpkg -x` into
-a directory works.
+## Firewall
 
-## Firewall (bridge-nf-call-iptables)
-
-When `br_netfilter` is loaded and `net.bridge.bridge-nf-call-iptables=1`
-(Docker and Neutron set this host-wide), frames between two nodes on the
-same bridge pass through the iptables `FORWARD` chain. If that chain's
-policy is `DROP`, as Docker sets it, the nodes cannot reach each other.
-Traffic to the host (DHCP, TFTP) goes through `INPUT` and is not affected.
-bmbox does not change the host-wide sysctl. The per-bridge
-`nf_call_iptables` knob cannot turn filtering off either, because the
-kernel ORs it with the host setting. Instead, `up` does what libvirt does:
-in a `BMBOX-FORWARD` chain, which `FORWARD` jumps to first, it accepts
-traffic that enters and leaves the same lab bridge:
+When `br_netfilter` is loaded with `net.bridge.bridge-nf-call-iptables=1`
+(Docker and Neutron set this), frames between two nodes on the same bridge
+go through the iptables `FORWARD` chain. With Docker's `DROP` policy, the
+nodes could not reach each other. bmbox does what libvirt does: in a
+`BMBOX-FORWARD` chain, which `FORWARD` jumps to first, it accepts traffic
+that enters and leaves the same lab bridge, in iptables and ip6tables:
 
 ```
 -A FORWARD -j BMBOX-FORWARD
 -A BMBOX-FORWARD -i bmb-demo-pxe -o bmb-demo-pxe -m comment --comment "bmbox:demo/pxe" -j ACCEPT
 ```
 
-The rule is added with both `iptables` and `ip6tables`, using the host's
-own binaries (legacy or nft), so it lands in the chain that holds the
-host's `DROP`. Rules are tagged with their lab network. `destroy` and
-`up --prune` remove them, and the chain and jump go away with the last
-rule. External bridges get no rule. Nothing is routed or NATed between a
-lab and the outside. A firewall reload that flushes `FORWARD` drops the
-jump, and the next `up` restores it.
+Host-wide settings are left alone, and nothing is routed or NATed between a
+lab and the outside. External bridges get no rule. `destroy` and
+`up --prune` remove the rules. A firewall reload that flushes `FORWARD`
+drops them, and the next `up` restores them.
 
-Flags: `-f/--file` topology file (default `topology.yaml`), `-c/--connect`
-libvirt URI (default `$LIBVIRT_DEFAULT_URI` or `qemu:///system`).
-`BMBOX_HOME` overrides the workspace directory (default `~/.bmbox` of the
-invoking user, also under sudo).
+## After a reboot
 
-## Layout
+Bridges, firewall rules and the BMC and dnsmasq units do not survive a host
+reboot, while the VMs and disks do. `up` therefore enables
+`bmbox-<lab>-boot.service`, which runs `bmbox up --lab <lab>` at boot,
+before `libvirt-guests` restores any running guests. Set
+`spec.autostart: false` to opt out, and run `sudo bmbox up --lab <lab>`
+yourself. `bmbox doctor` lists labs that will not come back.
+
+## Files
 
 ```
-cmd/            Cobra commands (validate, render, up, status, list, console, destroy)
-pkg/topology    topology.yaml schema, defaults, validation
-pkg/network     Linux bridges via rtnetlink, sysctls, FORWARD rules for lab bridges
-pkg/hypervisor  libvirt RPC client: firmware discovery, storage pool, domain XML
-pkg/systemd     transient service units over D-Bus
-pkg/bmc         per-node Redfish/IPMI BMCs as systemd units
-pkg/netboot     per-lab dnsmasq: DHCP, TFTP, iPXE script
-pkg/console     terminal <-> serial UNIX socket
-pkg/engine      orchestrates up (incl. orphan detection/prune), destroy and status
-pkg/workspace   ~/.bmbox state (topology snapshot, state.json, domain XML)
-examples/       sample topology
+/var/lib/bmbox/
+├── tools.json              tool paths found by setup / up
+├── tools/venv/             sushy-tools and virtualbmc
+├── ca/ca.crt               CA of the Redfish certificates (trust this)
+├── labs/<lab>/
+│   ├── topology.yaml       topology of the last up (root only)
+│   ├── state.json          what up created, used by status and destroy
+│   ├── domains/<node>.xml  rendered domain XML
+│   └── bmc/<node>/         BMC config, certificate, password (root only)
+└── <lab>/                  dnsmasq config, leases, TFTP root
+/var/lib/libvirt/bmbox/<lab>/   disks and NVRAM
+/run/bmbox/<lab>/               serial console sockets and logs
 ```
 
-Node disks and NVRAM live in a libvirt `dir` storage pool
-(`/var/lib/libvirt/bmbox/<lab>` by default) so they are reachable by libvirtd
-even when it runs in a container.
+`BMBOX_HOME` points the workspace somewhere else. Labs created by older
+versions in `~/.bmbox` are still found, and are moved by their next `up`.
 
-## Tests
+## Development
 
 ```bash
-go test ./...                                  # unit tests
-go build -o bin/bmbox . && BMBOX=bin/bmbox scripts/e2e.sh   # on a libvirt host
+make build    # bin/bmbox, version from git
+make test     # unit tests
+make lint     # gofmt, go vet, staticcheck
+make e2e      # end-to-end test on a libvirt host with sudo
+make dist     # tarball, .deb and .rpm in dist/
 ```
 
-`scripts/e2e.sh` brings up its own lab (`e2e`, subnet 172.30.90.0/24,
-BMC ports 8390/6390) and runs the whole lifecycle against real libvirt: up,
-Redfish and IPMI power control, netboot (DHCP lease, iPXE, the kernel on
-the serial console), console, convergence and `--prune`, traffic on a lab
-bridge despite a `FORWARD` drop (two network namespaces as endpoints),
-locking and destroy. By default it netboots the host's `/boot/vmlinuz` and
-`/boot/initrd.img` (`E2E_KERNEL` / `E2E_INITRD`). It snapshots the rest
-of the host (domains, storage pools, bridges, bmbox units and data, the
-`FORWARD` chains and the sysctls bmbox may change) before and after, and
-fails if anything outside its lab changed. It honours
-`BMBOX_HOME` and `LIBVIRT_DEFAULT_URI`; BMC tools are found as for
-`bmbox up`, and dnsmasq/iPXE are found as described above.
+`scripts/e2e.sh` runs the whole lifecycle against real libvirt in its own
+lab (`e2e`, subnet 172.30.90.0/24, BMC ports 8390/6390): up, Redfish and
+IPMI power control, netboot to a kernel on the serial console, console,
+convergence and `--prune`, traffic past a `FORWARD` drop, a simulated reboot,
+locking and destroy. It fails if anything outside its lab changed on the
+host. CI runs it on a self-hosted runner labelled `bmbox-e2e`.
 
-Demo walkthroughs: [week 3](docs/demo-week3.md), [week 4](docs/demo-week4.md), [week 5](docs/demo-week5.md).
+```
+cmd/            CLI commands
+pkg/topology    topology.yaml schema, defaults, validation
+pkg/engine      up (with orphan detection and prune), destroy, status, boot units
+pkg/network     bridges over netlink, sysctls, FORWARD rules
+pkg/hypervisor  libvirt: firmware, storage pool, domain XML
+pkg/bmc         Redfish and IPMI BMCs, passwords, TLS
+pkg/netboot     per-lab dnsmasq: DHCP, TFTP, iPXE
+pkg/systemd     transient and persistent units over D-Bus
+pkg/console     serial console client
+pkg/setup       host setup
+pkg/doctor      host checks
+pkg/workspace   /var/lib/bmbox state
+pkg/logging     quiet, verbose, timestamps
+```
+
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Report security problems as described in [SECURITY.md](SECURITY.md).
+
+## License
+
+[Apache License 2.0](LICENSE)
