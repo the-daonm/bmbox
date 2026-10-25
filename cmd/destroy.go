@@ -32,7 +32,7 @@ root.`,
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		return engine.Destroy(ctx, lab, t, ws, engine.Options{LibvirtURI: libvirtURI, Out: os.Stdout})
+		return engine.Destroy(ctx, lab, t, ws, engine.Options{LibvirtURI: libvirtURI, Out: progress()})
 	},
 }
 

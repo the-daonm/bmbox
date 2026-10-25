@@ -8,6 +8,8 @@ import (
 	"net/url"
 
 	"github.com/digitalocean/go-libvirt"
+
+	"bmbox/pkg/logging"
 )
 
 const DefaultURI = "qemu:///system"
@@ -22,6 +24,7 @@ func Connect(uri string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid libvirt URI %q: %w", uri, err)
 	}
+	logging.Debugf("libvirt: connect %s", uri)
 	l, err := libvirt.ConnectToURI(u)
 	if err != nil {
 		return nil, fmt.Errorf("connect to libvirt at %s: %w", uri, err)

@@ -3,11 +3,13 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
 
 	"bmbox/pkg/hypervisor"
+	"bmbox/pkg/logging"
 	"bmbox/pkg/topology"
 )
 
@@ -17,6 +19,8 @@ var (
 	topologyFile string
 	libvirtURI   string
 	labFlag      string
+	quiet        bool
+	verbose      bool
 )
 
 var rootCmd = &cobra.Command{
@@ -28,6 +32,32 @@ for the nodes, and emulated BMCs for out-of-band control.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	Version:       version,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if quiet && verbose {
+			return fmt.Errorf("--quiet and --verbose cannot be used together")
+		}
+		if verbose {
+			logging.SetDebug(stamp(os.Stderr))
+		}
+		return nil
+	},
+}
+
+// stamp adds timestamps to f's lines when it is not a terminal.
+func stamp(f *os.File) io.Writer {
+	if logging.WantTimestamps(f) {
+		return &logging.Timestamped{W: f}
+	}
+	return f
+}
+
+// progress is where up and destroy report what they do: nothing with
+// --quiet, timestamped lines when stdout is not a terminal.
+func progress() io.Writer {
+	if quiet {
+		return io.Discard
+	}
+	return stamp(os.Stdout)
 }
 
 func Execute() error {
@@ -45,6 +75,8 @@ func init() {
 	}
 	rootCmd.PersistentFlags().StringVarP(&topologyFile, "file", "f", "topology.yaml", "topology file")
 	rootCmd.PersistentFlags().StringVarP(&libvirtURI, "connect", "c", defURI, "libvirt connection URI")
+	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "do not print progress (up, destroy); errors are still printed")
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "also print the commands and system calls bmbox makes (on stderr)")
 }
 
 // resolveLab returns the lab to act on: --lab, else the topology file's name.

@@ -52,7 +52,7 @@ disks or NVRAM. Requires root.`,
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		st, err := engine.Up(ctx, t, raw, ws, engine.Options{
-			LibvirtURI: libvirtURI, Out: os.Stdout,
+			LibvirtURI: libvirtURI, Out: progress(),
 			SushyEmulator: sushy, VBMC: vbmc, Dnsmasq: dnsmasq, IPXE: ipxe, Prune: prune,
 		})
 		if err != nil {
@@ -61,7 +61,7 @@ disks or NVRAM. Requires root.`,
 		if err := ws.SaveTools(workspace.Tools{SushyEmulator: sushy, VBMC: vbmc, Dnsmasq: dnsmasq, IPXE: ipxe}); err != nil {
 			fmt.Fprintln(os.Stderr, "warning: could not remember tool paths:", err)
 		}
-		fmt.Printf("\nLab %q is up: %d network(s), %d node(s). State: %s\n",
+		fmt.Fprintf(progress(), "\nLab %q is up: %d network(s), %d node(s). State: %s\n",
 			st.Lab, len(st.Networks), len(st.Nodes), ws.LabDir(st.Lab))
 		return nil
 	},

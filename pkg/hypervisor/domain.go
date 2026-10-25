@@ -8,6 +8,8 @@ import (
 
 	"github.com/digitalocean/go-libvirt"
 	"libvirt.org/go/libvirtxml"
+
+	"bmbox/pkg/logging"
 )
 
 // MetadataNS tags domains created by bmbox so they are never confused with
@@ -207,6 +209,7 @@ func (c *Client) DefineNode(s NodeSpec) (*DefineResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	logging.Debugf("libvirt: define domain %s", s.DomainName)
 	dom, err = c.l.DomainDefineXMLFlags(xml, libvirt.DomainDefineValidate)
 	if err != nil {
 		return nil, fmt.Errorf("define domain %s: %w", s.DomainName, err)

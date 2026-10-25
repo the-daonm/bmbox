@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"bmbox/pkg/logging"
 )
 
 // ForwardChain holds bmbox's rules in the filter table. FORWARD jumps to
@@ -40,6 +42,7 @@ func NewFirewall() *Firewall {
 }
 
 func runIPTables(bin string, args ...string) (string, error) {
+	logging.Debugf("run %s -w -t filter %s", bin, strings.Join(args, " "))
 	out, err := exec.Command(bin, append([]string{"-w", "-t", "filter"}, args...)...).CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("%s %s: %w: %s", bin, strings.Join(args, " "), err, strings.TrimSpace(string(out)))

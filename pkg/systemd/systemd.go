@@ -12,6 +12,8 @@ import (
 
 	sdbus "github.com/coreos/go-systemd/v22/dbus"
 	"github.com/godbus/dbus/v5"
+
+	"bmbox/pkg/logging"
 )
 
 type Manager struct {
@@ -48,6 +50,7 @@ func (m *Manager) Start(ctx context.Context, s Service) error {
 		{Name: "Restart", Value: dbus.MakeVariant("on-failure")},
 		{Name: "RestartUSec", Value: dbus.MakeVariant(uint64(2 * time.Second / time.Microsecond))},
 	}
+	logging.Debugf("systemd: start %s: %s", s.Unit, strings.Join(s.Cmd, " "))
 	if len(s.Env) > 0 {
 		props = append(props, sdbus.Property{Name: "Environment", Value: dbus.MakeVariant(s.Env)})
 	}
@@ -64,6 +67,7 @@ func (m *Manager) Start(ctx context.Context, s Service) error {
 // Stop stops a unit and clears its failed state. A unit that does not exist
 // is not an error.
 func (m *Manager) Stop(ctx context.Context, unit string) error {
+	logging.Debugf("systemd: stop %s", unit)
 	done := make(chan string, 1)
 	if _, err := m.conn.StopUnitContext(ctx, unit, "replace", done); err != nil {
 		var de dbus.Error
