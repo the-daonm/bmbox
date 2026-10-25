@@ -17,7 +17,7 @@ type fakeSystem struct {
 }
 
 func newFake() *fakeSystem {
-	return &fakeSystem{bins: map[string]bool{}, installed: map[string]bool{}, files: map[string]string{}}
+	return &fakeSystem{bins: map[string]bool{}, installed: map[string]bool{}, files: map[string]string{"/run/systemd/system": ""}}
 }
 
 func (f *fakeSystem) Run(env []string, name string, args ...string) error {
@@ -177,5 +177,23 @@ func TestNoPackageManager(t *testing.T) {
 	sys := newFake()
 	if _, err := Run(Options{Out: &bytes.Buffer{}, System: sys, VenvDir: "/v"}); err == nil || !strings.Contains(err.Error(), "--skip-packages") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestNoSystemdLeavesLibvirtAlone(t *testing.T) {
+	sys := newFake()
+	delete(sys.files, "/run/systemd/system")
+	sys.bins["python3"] = true
+	var out bytes.Buffer
+	if _, err := Run(Options{Out: &out, System: sys, VenvDir: "/v", SkipPackages: true, OwnsVenv: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range sys.ran {
+		if strings.HasPrefix(r, "systemctl") {
+			t.Errorf("ran %q without systemd", r)
+		}
+	}
+	if !strings.Contains(out.String(), "start libvirt yourself") {
+		t.Errorf("no warning:\n%s", out.String())
 	}
 }

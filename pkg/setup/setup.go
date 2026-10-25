@@ -198,6 +198,11 @@ func ensureLibvirt(opt Options, log func(string, ...any)) error {
 			return nil
 		}
 	}
+	// Without systemd (a container, say), libvirt is not ours to start.
+	if !opt.System.Exists("/run/systemd/system") {
+		log("    warning: libvirt is not running and systemd is not either: start libvirt yourself")
+		return nil
+	}
 	unit := "libvirtd.service"
 	if _, ok := opt.System.Check("systemctl", "cat", "virtqemud.socket"); ok {
 		unit = "virtqemud.socket"
