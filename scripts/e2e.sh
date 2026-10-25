@@ -344,13 +344,13 @@ fi
 fwd_cleanup
 
 section "Locking"
-# The workspace belongs to root: hold the lab lock from a root process.
-sudo flock -n "$LOCK" sleep 20 &
+# The workspace belongs to root: hold the lab lock from a root process for
+# a few seconds. (Killing flock would not do: its child keeps the lock.)
+sudo flock -n "$LOCK" sleep 8 &
 LOCKER=$!
 check "test holds the lab lock" wait_for 5 bash -c "! sudo flock -n '$LOCK' true"
 check "a second command on the same lab is refused" \
 	bash -c "sudo env $HOMEENV '$BMBOX' up -f '$FULL' 2>&1 | grep -q 'already running'"
-sudo pkill -f "flock -n $LOCK sleep" 2>/dev/null
 wait "$LOCKER" 2>/dev/null
 check "lock released" wait_for 5 lock_free
 
