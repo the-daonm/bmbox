@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -76,5 +78,33 @@ spec:
 	o := findOrphans(topo, d, nil)
 	if len(o.rules) != 2 || o.rules["data"] == "" || o.rules["ext"] == "" {
 		t.Errorf("rule orphans = %v", o.rules)
+	}
+}
+
+func TestGivenPassword(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "pw")
+	os.WriteFile(file, []byte("from-file\n"), 0o600)
+	node := func(b topology.BMC) *topology.Node { return &topology.Node{Name: "n1", BMC: &b} }
+
+	if pw, err := givenPassword(node(topology.BMC{Type: "redfish", Password: "inline"}), dir); err != nil || pw != "inline" {
+		t.Errorf("inline: %q, %v", pw, err)
+	}
+	if pw, err := givenPassword(node(topology.BMC{Type: "redfish", PasswordFile: file}), dir); err != nil || pw != "from-file" {
+		t.Errorf("file: %q, %v", pw, err)
+	}
+	t.Setenv("BMBOX_TEST_PW", "from-env")
+	if pw, err := givenPassword(node(topology.BMC{Type: "redfish", PasswordEnv: "BMBOX_TEST_PW"}), dir); err != nil || pw != "from-env" {
+		t.Errorf("env: %q, %v", pw, err)
+	}
+	if _, err := givenPassword(node(topology.BMC{Type: "redfish", PasswordEnv: "BMBOX_TEST_UNSET"}), dir); err == nil {
+		t.Error("unset variable without a stored password accepted")
+	}
+	os.WriteFile(filepath.Join(dir, "password"), []byte("stored\n"), 0o600)
+	if pw, err := givenPassword(node(topology.BMC{Type: "redfish", PasswordEnv: "BMBOX_TEST_UNSET"}), dir); err != nil || pw != "stored" {
+		t.Errorf("unset variable must keep the stored password: %q, %v", pw, err)
+	}
+	if _, err := givenPassword(node(topology.BMC{Type: "ipmi", Password: "123456789012345678901"}), dir); err == nil {
+		t.Error("21-character IPMI password accepted")
 	}
 }

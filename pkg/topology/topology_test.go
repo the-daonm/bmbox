@@ -2,6 +2,7 @@ package topology
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -220,5 +221,35 @@ func TestValidateLabName(t *testing.T) {
 		if ValidateLabName(bad) == nil {
 			t.Errorf("%q accepted", bad)
 		}
+	}
+}
+
+func TestBMCPasswordSources(t *testing.T) {
+	base := `apiVersion: bmbox.io/v1alpha1
+kind: Topology
+metadata: {name: lab1}
+spec:
+  nodes:
+    - name: n1
+      boot: [disk]
+      bmc: %s
+`
+	for bmc, want := range map[string]string{
+		`{type: redfish, password: a, passwordEnv: B}`:  "set only one of",
+		`{type: redfish, passwordFile: relative/pw}`:    "must be an absolute path",
+		`{type: redfish, passwordEnv: "1BAD"}`:          "not a valid environment variable name",
+		`{type: ipmi, password: 123456789012345678901}`: "longer than the 20 characters",
+	} {
+		_, err := Parse([]byte(fmt.Sprintf(base, bmc)))
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: got %v, want %q", bmc, err, want)
+		}
+	}
+	tp, err := Parse([]byte(fmt.Sprintf(base, `{type: redfish, passwordEnv: LAB_BMC_PW}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := tp.Spec.Nodes[0].BMC; b.Password != "" || b.PasswordEnv != "LAB_BMC_PW" {
+		t.Errorf("bmc = %+v (no default password expected)", b)
 	}
 }

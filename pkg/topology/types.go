@@ -122,8 +122,11 @@ type BMC struct {
 	Port     int    `yaml:"port"`
 	Username string `yaml:"username"`
 	// Password, when empty, is generated on the first `up` and kept; see
-	// `bmbox credentials`.
-	Password string `yaml:"password"`
+	// `bmbox credentials`. PasswordFile (absolute path) or PasswordEnv (a
+	// variable bmbox reads at `up`) keep it out of the topology instead.
+	Password     string `yaml:"password"`
+	PasswordFile string `yaml:"passwordFile"`
+	PasswordEnv  string `yaml:"passwordEnv"`
 }
 
 const (

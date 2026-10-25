@@ -341,7 +341,11 @@ func ensureBMCs(ctx context.Context, t *topology.Topology, st *workspace.LabStat
 			continue
 		}
 		spec := BMCSpec(t, n, ns.UUID, loader, opt.LibvirtURI, ws)
-		pw, generated, err := bmc.ResolvePassword(spec.Dir, n.BMC.Password, ws)
+		given, err := givenPassword(n, spec.Dir)
+		if err != nil {
+			return fmt.Errorf("node %s: %w", n.Name, err)
+		}
+		pw, generated, err := bmc.ResolvePassword(spec.Dir, given, ws)
 		if err != nil {
 			return fmt.Errorf("node %s: %w", n.Name, err)
 		}
@@ -366,6 +370,37 @@ func ensureBMCs(ctx context.Context, t *topology.Topology, st *workspace.LabStat
 		log("    %-10s %-8s %-8s %s%s", n.Name, spec.Type, action, spec.Endpoint(), note)
 	}
 	return nil
+}
+
+// givenPassword returns the BMC password the topology sets, inline, from
+// a file or from an environment variable, or "" to use the stored or a
+// generated one. An unset variable keeps the password stored by the last
+// run, so a later `up` (e.g. at boot) does not need the variable.
+func givenPassword(n *topology.Node, dir string) (string, error) {
+	b := n.BMC
+	pw := b.Password
+	switch {
+	case b.PasswordFile != "":
+		data, err := os.ReadFile(b.PasswordFile)
+		if err != nil {
+			return "", fmt.Errorf("BMC passwordFile: %w", err)
+		}
+		if pw = strings.TrimRight(string(data), "\r\n"); pw == "" {
+			return "", fmt.Errorf("BMC passwordFile %s is empty", b.PasswordFile)
+		}
+	case b.PasswordEnv != "":
+		if pw = os.Getenv(b.PasswordEnv); pw == "" {
+			stored, err := bmc.ReadPassword(dir)
+			if err != nil {
+				return "", fmt.Errorf("BMC passwordEnv: $%s is not set (sudo resets the environment: sudo %s=... bmbox up)", b.PasswordEnv, b.PasswordEnv)
+			}
+			pw = stored
+		}
+	}
+	if b.Type == bmc.TypeIPMI && len(pw) > bmc.MaxIPMIPassword {
+		return "", fmt.Errorf("BMC password is longer than the %d characters IPMI allows", bmc.MaxIPMIPassword)
+	}
+	return pw, nil
 }
 
 // preflightBMCs locates the BMC tools, connects to systemd and checks every

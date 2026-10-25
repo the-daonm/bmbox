@@ -9,7 +9,10 @@ import (
 	"strings"
 )
 
-var nameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+var (
+	nameRE    = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+	envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+)
 
 const (
 	maxLabNameLen  = 24
@@ -320,6 +323,21 @@ func (t *Topology) validateNodes(v *validator) {
 			}
 			if b.Username == "" || strings.ContainsAny(b.Username, ": \t\n") {
 				v.addf(path+".bmc.username", "%q must be non-empty without ':' or whitespace", b.Username)
+			}
+			set := 0
+			for _, s := range []string{b.Password, b.PasswordFile, b.PasswordEnv} {
+				if s != "" {
+					set++
+				}
+			}
+			if set > 1 {
+				v.addf(path+".bmc", "set only one of password, passwordFile and passwordEnv")
+			}
+			if b.PasswordFile != "" && !filepath.IsAbs(b.PasswordFile) {
+				v.addf(path+".bmc.passwordFile", "must be an absolute path, got %q", b.PasswordFile)
+			}
+			if b.PasswordEnv != "" && !envNameRE.MatchString(b.PasswordEnv) {
+				v.addf(path+".bmc.passwordEnv", "%q is not a valid environment variable name", b.PasswordEnv)
 			}
 			if b.Type == BMCIPMI && len(b.Password) > maxIPMIPassword {
 				v.addf(path+".bmc.password", "is longer than the %d characters IPMI allows", maxIPMIPassword)
