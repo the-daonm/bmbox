@@ -115,6 +115,10 @@ func findProgram(explicit, env, name string) (string, error) {
 	return p, nil
 }
 
+// Interpreter returns the Python interpreter a console script (such as
+// sushy-emulator or vbmc) runs with.
+func Interpreter(script string) (string, error) { return interpreterOf(script) }
+
 // interpreterOf reads the python interpreter from a console script's
 // shebang, so a virtualenv install is used with its own site-packages.
 func interpreterOf(script string) (string, error) {
