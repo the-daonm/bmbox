@@ -1,10 +1,40 @@
+# Weekly dependency updates. Minor and patch updates are grouped into one
+# pull request per ecosystem and merge themselves once CI and the e2e test
+# pass (see workflows/dependabot-auto-merge.yml); major updates wait for a
+# maintainer.
 version: 2
 updates:
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
+      day: monday
+    labels: [dependencies, go]
+    commit-message:
+      prefix: deps
+    groups:
+      go-minor-and-patch:
+        update-types: [minor, patch]
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+      day: monday
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: ci
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]
+
+  # The BMC emulators `bmbox setup` installs (pkg/setup/requirements.txt).
+  # One pull request per tool, so an e2e failure points at one of them.
+  - package-ecosystem: pip
+    directory: /pkg/setup
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, bmc]
+    commit-message:
+      prefix: setup
