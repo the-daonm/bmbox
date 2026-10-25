@@ -69,7 +69,8 @@ var managers = []PackageManager{
 		Name: "dnf",
 		Packages: []string{"qemu-kvm", "libvirt", "edk2-ovmf", "dnsmasq", "ipxe-bootimgs-x86",
 			"python3", "python3-libvirt", "ipmitool", "iptables"},
-		installed: func(p string) []string { return []string{"rpm", "-q", p} },
+		// --whatprovides: "iptables" is installed as iptables-nft.
+		installed: func(p string) []string { return []string{"rpm", "-q", "--whatprovides", p} },
 		install: func(pkgs []string) [][]string {
 			return [][]string{append([]string{"dnf", "install", "-y"}, pkgs...)}
 		},

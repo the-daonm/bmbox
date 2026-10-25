@@ -205,3 +205,9 @@ func TestPinnedVersionsComeFromRequirements(t *testing.T) {
 		}
 	}
 }
+
+func TestDnfChecksWhatProvidesAPackage(t *testing.T) {
+	if got := strings.Join(managers[1].installed("iptables"), " "); got != "rpm -q --whatprovides iptables" {
+		t.Errorf("dnf installed check = %q", got)
+	}
+}
