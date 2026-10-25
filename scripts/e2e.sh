@@ -165,7 +165,7 @@ host_snapshot() {
 	echo "## pools"; pools | grep -vx "bmbox-$LAB" | sort
 	echo "## bridges"; other_bridges
 	echo "## bmbox units"; other_units
-	echo "## bmbox data"; sudo ls /var/lib/bmbox 2>/dev/null | grep -vxE "$LAB|labs|tools|tools.json"
+	echo "## bmbox data"; sudo ls /var/lib/bmbox 2>/dev/null | grep -vxE "$LAB|labs|tools|tools.json|ca"
 	for t in iptables ip6tables; do
 		echo "## $t FORWARD"
 		sudo $t -w -S FORWARD 2>/dev/null
@@ -182,13 +182,13 @@ state() { # python expression over the state document s
 }
 node_state() { state "[n for n in s['nodes'] if n['name']=='$1'][0]$2"; }
 
-redfish() { curl -s -u admin:password "$@"; }
+redfish() { curl -s --cacert "$CA" -u "admin:$N1_PASS" "$@"; }
 power_state() { redfish "$RF/Systems/$UUID1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["PowerState"])'; }
 reset() {
 	[ "$(redfish -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
 		-X POST -d "{\"ResetType\":\"$1\"}" "$RF/Systems/$UUID1/Actions/ComputerSystem.Reset")" = 204 ]
 }
-ipmi() { ipmitool -I lanplus -H 127.0.0.1 -p "$IPMI_PORT" -U admin -P "${IPMI_PASS:-password}" "$@"; }
+ipmi() { ipmitool -I lanplus -H 127.0.0.1 -p "$IPMI_PORT" -U admin -P "${IPMI_PASS:-$N2_PASS}" "$@"; }
 is_power() { [ "$(power_state)" = "$1" ]; }
 
 console_to() { # file seconds: attach to n1 without input, keep the output
@@ -244,12 +244,24 @@ check "TFTP root holds iPXE, script, kernel and initrd" \
 UUID1=$(node_state n1 "['uuid']")
 RF=$(node_state n1 "['bmc']['endpoint'].split('/Systems/')[0]")
 [ -n "$UUID1" ] && [ -n "$RF" ] || die "could not read n1's UUID/BMC from $STATE"
-export RF UUID1 IPMI_PORT
+bm credentials --lab "$LAB" -o json >"$TMP/creds" 2>&1
+cred() { python3 -c "import json,sys; print([c for c in json.load(open(sys.argv[1])) if c['node']==sys.argv[2]][0][sys.argv[3]])" "$TMP/creds" "$1" "$2"; }
+N1_PASS=$(cred n1 password)
+N2_PASS=$(cred n2 password)
+CA=$(cred n1 caCert)
+check "BMC passwords are generated (16 characters, one per node)" \
+	bash -c "[ ${#N1_PASS} -eq 16 ] && [ ${#N2_PASS} -eq 16 ] && [ '$N1_PASS' != '$N2_PASS' ]"
+check "credentials need root" \
+	bash -c "'$BMBOX' credentials --lab $LAB 2>&1 | grep -q 'root only'"
+export RF UUID1 IPMI_PORT N1_PASS N2_PASS CA
 export -f redfish power_state ipmi is_power
 
 section "Redfish (n1)"
+check "endpoint is HTTPS, signed by the bmbox CA" \
+	bash -c "[[ \$RF == https://* ]] && curl -sf --cacert '$CA' -u 'admin:$N1_PASS' -o /dev/null '$RF/Systems/$UUID1'"
+check "certificate is not trusted without the CA" bash -c "! curl -s -o /dev/null '$RF/Systems/$UUID1'"
 check "unauthenticated request is rejected (401)" \
-	test "$(curl -s -o /dev/null -w '%{http_code}' "$RF/Systems/$UUID1")" = 401
+	test "$(curl -s --cacert "$CA" -o /dev/null -w '%{http_code}' "$RF/Systems/$UUID1")" = 401
 check "Systems collection holds only this node" \
 	bash -c "redfish \$RF/Systems | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d[\"Members@odata.count\"]==1, d'"
 check "PowerState is Off" is_power Off
