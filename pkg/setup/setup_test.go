@@ -13,6 +13,8 @@ type fakeSystem struct {
 	installed map[string]bool
 	files     map[string]string
 	versions  string
+	oldPython bool
+	pyVersion string
 	ran       []string
 }
 
@@ -34,6 +36,10 @@ func (f *fakeSystem) Check(name string, args ...string) (string, bool) {
 		return "", false
 	case name == "systemctl":
 		return "", false
+	case name == "/usr/bin/python3" && args[0] == "--version":
+		return f.pyVersion, true
+	case name == "/usr/bin/python3": // version check before creating the venv
+		return "", !f.oldPython
 	case name == "python3": // the host's interpreter: where libvirt is
 		return "/usr/lib/python3/dist-packages/libvirt.py\n/usr/lib/python3/dist-packages/libvirtmod.so\n", true
 	case strings.HasSuffix(name, "/bin/python3"): // the virtualenv's
@@ -202,6 +208,21 @@ func TestPinnedVersionsComeFromRequirements(t *testing.T) {
 	for pkg, got := range map[string]string{"sushy-tools": SushyToolsVersion, "virtualbmc": VirtualBMCVersion} {
 		if !strings.Contains(requirements, pkg+"=="+got+"\n") {
 			t.Errorf("%s pinned to %q, not what requirements.txt says", pkg, got)
+		}
+	}
+}
+
+func TestOldPythonIsRefused(t *testing.T) {
+	sys := newFake()
+	sys.bins["python3"] = true
+	sys.oldPython, sys.pyVersion = true, "Python 3.9.18"
+	_, err := Run(Options{Out: &bytes.Buffer{}, System: sys, VenvDir: "/v", SkipPackages: true, OwnsVenv: true})
+	if err == nil || !strings.Contains(err.Error(), "Python 3.10 or newer, this host has Python 3.9.18") {
+		t.Fatalf("err = %v", err)
+	}
+	for _, r := range sys.ran {
+		if strings.Contains(r, "venv") {
+			t.Errorf("created a virtualenv with an old Python: %q", r)
 		}
 	}
 }

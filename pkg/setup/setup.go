@@ -251,6 +251,11 @@ func ensureVenv(opt Options, log func(string, ...any)) error {
 		if python == "" {
 			python = "python3"
 		}
+		if out, ok := sys.Check(python, "-c", "import sys; sys.exit(sys.version_info < (3, 10))"); !ok && !opt.DryRun {
+			ver, _ := sys.Check(python, "--version")
+			return fmt.Errorf("sushy-tools %s needs Python 3.10 or newer, this host has %s%s (RHEL 9 and its rebuilds are too old; use RHEL 10)",
+				SushyToolsVersion, strings.TrimSpace(ver), strings.TrimSpace(out))
+		}
 		log("    create virtualenv %s", opt.VenvDir)
 		if err := run(opt, nil, python, "-m", "venv", opt.VenvDir); err != nil {
 			return fmt.Errorf("create virtualenv: %w", err)
