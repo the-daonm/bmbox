@@ -150,7 +150,7 @@ func ownsVolume(nodes []string) func(string) bool {
 func Destroy(ctx context.Context, lab string, t *topology.Topology, ws *workspace.Workspace, opt Options) error {
 	log := func(format string, args ...any) { fmt.Fprintf(opt.Out, format+"\n", args...) }
 	if os.Geteuid() != 0 {
-		return errors.New("bmbox destroy must run as root: sudo bmbox destroy ...")
+		return errors.New("bmbox destroy must run as root (sudo bmbox destroy)")
 	}
 	unlock, err := ws.Lock(lab)
 	if err != nil {

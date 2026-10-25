@@ -129,7 +129,7 @@ func Up(ctx context.Context, t *topology.Topology, raw []byte, ws *workspace.Wor
 	log := func(format string, args ...any) { fmt.Fprintf(opt.Out, format+"\n", args...) }
 
 	if os.Geteuid() != 0 {
-		return nil, errors.New("bmbox up must run as root (bridges need CAP_NET_ADMIN): sudo bmbox up ...")
+		return nil, errors.New("bmbox up must run as root, bridges need CAP_NET_ADMIN (sudo bmbox up)")
 	}
 	unlock, err := ws.Lock(lab)
 	if err != nil {
