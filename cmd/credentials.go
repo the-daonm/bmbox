@@ -49,7 +49,7 @@ var credentialsCmd = &cobra.Command{
 			if n.BMC == nil {
 				continue
 			}
-			c := credential{Node: n.Name, Type: n.BMC.Type, Endpoint: n.BMC.Endpoint, Username: n.BMC.Username}
+			c := credential{Node: n.Name, Type: n.BMC.Type, Endpoint: n.BMC.Endpoint, Username: n.BMC.Username, CACert: n.BMC.CACert}
 			file := n.BMC.PasswordFile
 			if file == "" {
 				file = bmc.PasswordPath(ws.BMCDir(lab, n.Name))
@@ -77,7 +77,16 @@ var credentialsCmd = &cobra.Command{
 		for _, c := range creds {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", c.Node, c.Type, c.Username, c.Password, c.Endpoint)
 		}
-		return w.Flush()
+		if err := w.Flush(); err != nil {
+			return err
+		}
+		for _, c := range creds {
+			if c.CACert != "" {
+				fmt.Printf("\nHTTPS endpoints are signed by the bmbox CA: %s\n", c.CACert)
+				break
+			}
+		}
+		return nil
 	},
 }
 
@@ -87,6 +96,7 @@ type credential struct {
 	Endpoint string `json:"endpoint"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	CACert   string `json:"caCert,omitempty"` // CA to trust for an https endpoint
 }
 
 func init() {

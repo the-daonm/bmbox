@@ -127,7 +127,13 @@ type BMC struct {
 	Password     string `yaml:"password"`
 	PasswordFile string `yaml:"passwordFile"`
 	PasswordEnv  string `yaml:"passwordEnv"`
+	// TLS serves Redfish over HTTPS with a certificate from bmbox's CA.
+	// Defaults to true for Redfish; IPMI has no TLS.
+	TLS *bool `yaml:"tls"`
 }
+
+// UseTLS reports whether the BMC is served over HTTPS.
+func (b *BMC) UseTLS() bool { return b.TLS != nil && *b.TLS }
 
 const (
 	BootNetwork = "network"

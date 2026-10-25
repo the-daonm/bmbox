@@ -121,6 +121,10 @@ func (t *Topology) ApplyDefaults() {
 			if n.BMC.Username == "" {
 				n.BMC.Username = "admin"
 			}
+			if n.BMC.TLS == nil && n.BMC.Type == BMCRedfish {
+				on := true
+				n.BMC.TLS = &on
+			}
 		}
 	}
 	t.assignBMCPorts()

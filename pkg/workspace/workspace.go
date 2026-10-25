@@ -3,6 +3,7 @@
 //
 //	/var/lib/bmbox/
 //	├── tools.json             where the BMC and netboot programs were found
+//	├── ca/                    CA of the Redfish BMC certificates (ca.crt to trust)
 //	└── labs/<lab>/
 //	    ├── topology.yaml      snapshot of the applied topology
 //	    ├── state.json         what `up` created (bridges, sysctls, volumes, domains)
@@ -105,6 +106,10 @@ func (w *Workspace) legacyLabDir(lab string) string {
 	}
 	return filepath.Join(w.legacy, "labs", lab)
 }
+
+// CADir holds the CA that signs the certificates of every Redfish BMC of
+// the host's labs.
+func (w *Workspace) CADir() string { return filepath.Join(w.Root, "ca") }
 
 // BMCDir holds a node's generated BMC config and credentials.
 func (w *Workspace) BMCDir(lab, node string) string {
@@ -325,6 +330,8 @@ type BMCState struct {
 	Endpoint string `json:"endpoint"`
 	// PasswordFile holds the password (root only).
 	PasswordFile string `json:"passwordFile,omitempty"`
+	// CACert is the CA certificate to trust for a TLS endpoint.
+	CACert string `json:"caCert,omitempty"`
 }
 
 func (w *Workspace) statePath(lab string) string {

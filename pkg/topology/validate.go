@@ -57,7 +57,7 @@ func (v *validator) name(path, s string, maxLen int) {
 
 // reservedLabNames are entries of bmbox's data directory (/var/lib/bmbox)
 // that are not labs: per-lab netboot data lives in /var/lib/bmbox/<lab>.
-var reservedLabNames = map[string]bool{"labs": true, "tools": true}
+var reservedLabNames = map[string]bool{"labs": true, "tools": true, "ca": true}
 
 func (v *validator) labName(path, s string) {
 	v.name(path, s, maxLabNameLen)
@@ -338,6 +338,9 @@ func (t *Topology) validateNodes(v *validator) {
 			}
 			if b.PasswordEnv != "" && !envNameRE.MatchString(b.PasswordEnv) {
 				v.addf(path+".bmc.passwordEnv", "%q is not a valid environment variable name", b.PasswordEnv)
+			}
+			if b.Type == BMCIPMI && b.UseTLS() {
+				v.addf(path+".bmc.tls", "is for Redfish BMCs only (IPMI has no TLS)")
 			}
 			if b.Type == BMCIPMI && len(b.Password) > maxIPMIPassword {
 				v.addf(path+".bmc.password", "is longer than the %d characters IPMI allows", maxIPMIPassword)

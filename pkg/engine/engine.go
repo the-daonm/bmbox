@@ -334,6 +334,7 @@ func Up(ctx context.Context, t *topology.Topology, raw []byte, ws *workspace.Wor
 func ensureBMCs(ctx context.Context, t *topology.Topology, st *workspace.LabState, bmcs *bmc.Manager,
 	loader string, ws *workspace.Workspace, opt Options, log func(string, ...any)) error {
 	log("==> BMCs")
+	var ca *bmc.CA
 	for i := range t.Spec.Nodes {
 		n := &t.Spec.Nodes[i]
 		ns := &st.Nodes[i]
@@ -350,6 +351,12 @@ func ensureBMCs(ctx context.Context, t *topology.Topology, st *workspace.LabStat
 			return fmt.Errorf("node %s: %w", n.Name, err)
 		}
 		spec.Password = pw
+		if spec.TLS = n.BMC.UseTLS(); spec.TLS && ca == nil {
+			if ca, err = bmc.EnsureCA(ws.CADir(), ws); err != nil {
+				return err
+			}
+		}
+		spec.CA = ca
 		res, err := bmcs.Ensure(ctx, spec, ws)
 		if err != nil {
 			return fmt.Errorf("node %s: %w", n.Name, err)
@@ -358,6 +365,9 @@ func ensureBMCs(ctx context.Context, t *topology.Topology, st *workspace.LabStat
 			Type: spec.Type, Address: spec.Address, Port: spec.Port,
 			Username: spec.Username, Unit: spec.Unit, Endpoint: spec.Endpoint(),
 			PasswordFile: bmc.PasswordPath(spec.Dir),
+		}
+		if spec.TLS {
+			ns.BMC.CACert = ca.CertFile
 		}
 		action := "running"
 		if res.Started {

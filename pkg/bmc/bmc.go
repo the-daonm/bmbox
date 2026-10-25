@@ -44,13 +44,20 @@ type Spec struct {
 	Unit   string
 	// Dir holds the BMC's generated config and credentials.
 	Dir string
+	// TLS serves Redfish over HTTPS with a certificate signed by CA.
+	TLS bool
+	CA  *CA
 }
 
 // Endpoint is the URL or host:port a client uses to reach the BMC.
 func (s Spec) Endpoint() string {
 	hp := net.JoinHostPort(s.Address, fmt.Sprint(s.Port))
 	if s.Type == TypeRedfish {
-		return "http://" + hp + "/redfish/v1/Systems/" + s.UUID
+		scheme := "http"
+		if s.TLS {
+			scheme = "https"
+		}
+		return scheme + "://" + hp + "/redfish/v1/Systems/" + s.UUID
 	}
 	return hp
 }

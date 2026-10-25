@@ -101,8 +101,12 @@ func powerOnHint(domain, node string, st *workspace.LabState) string {
 				continue
 			}
 			if b := n.BMC; b.Type == "redfish" {
-				return fmt.Sprintf(`curl -u %s:PASSWORD -H 'Content-Type: application/json' -X POST -d '{"ResetType":"On"}' %s/Actions/ComputerSystem.Reset`,
-					b.Username, b.Endpoint)
+				ca := ""
+				if b.CACert != "" {
+					ca = "--cacert " + b.CACert + " "
+				}
+				return fmt.Sprintf(`curl %s-u %s:PASSWORD -H 'Content-Type: application/json' -X POST -d '{"ResetType":"On"}' %s/Actions/ComputerSystem.Reset`,
+					ca, b.Username, b.Endpoint)
 			} else if host, port, err := net.SplitHostPort(b.Endpoint); err == nil {
 				return fmt.Sprintf("ipmitool -I lanplus -H %s -p %s -U %s -P PASSWORD power on", host, port, b.Username)
 			}

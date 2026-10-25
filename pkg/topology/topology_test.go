@@ -253,3 +253,29 @@ spec:
 		t.Errorf("bmc = %+v (no default password expected)", b)
 	}
 }
+
+func TestBMCTLSDefaults(t *testing.T) {
+	base := `apiVersion: bmbox.io/v1alpha1
+kind: Topology
+metadata: {name: lab1}
+spec:
+  nodes:
+    - name: n1
+      boot: [disk]
+      bmc: %s
+`
+	tp, err := Parse([]byte(fmt.Sprintf(base, `{type: redfish}`)))
+	if err != nil || !tp.Spec.Nodes[0].BMC.UseTLS() {
+		t.Fatalf("redfish defaults to TLS: %v", err)
+	}
+	tp, err = Parse([]byte(fmt.Sprintf(base, `{type: redfish, tls: false}`)))
+	if err != nil || tp.Spec.Nodes[0].BMC.UseTLS() {
+		t.Fatalf("tls: false: %v", err)
+	}
+	if tp, err = Parse([]byte(fmt.Sprintf(base, `{type: ipmi}`))); err != nil || tp.Spec.Nodes[0].BMC.UseTLS() {
+		t.Fatalf("ipmi: %v", err)
+	}
+	if _, err = Parse([]byte(fmt.Sprintf(base, `{type: ipmi, tls: true}`))); err == nil || !strings.Contains(err.Error(), "Redfish BMCs only") {
+		t.Fatalf("ipmi with tls: %v", err)
+	}
+}
