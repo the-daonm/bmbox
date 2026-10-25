@@ -113,14 +113,18 @@ func (m *Manager) InstallUnit(ctx context.Context, name, content string) (bool, 
 	return changed, nil
 }
 
-// RemoveUnit disables a unit installed by InstallUnit and deletes its
-// file. It reports whether there was one.
+// RemoveUnit stops and disables a unit installed by InstallUnit and
+// deletes its file. It reports whether there was one.
 func (m *Manager) RemoveUnit(ctx context.Context, name string) (bool, error) {
 	path := filepath.Join(UnitDir, name)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return false, nil
 	}
 	logging.Debugf("systemd: disable and remove %s", name)
+	// Stop it too: an active unit outlives its file as "not-found".
+	if err := m.Stop(ctx, name); err != nil {
+		return false, err
+	}
 	if _, err := m.conn.DisableUnitFilesContext(ctx, []string{name}, false); err != nil {
 		return false, fmt.Errorf("disable %s: %w", name, err)
 	}
