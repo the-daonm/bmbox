@@ -300,7 +300,10 @@ print("\n".join(sorted(glob.glob(os.path.join(d, "libvirt*")))))`)
 		}
 		linked++
 	}
-	if linked > 0 {
+	switch {
+	case linked > 0 && opt.DryRun:
+		log("    would link the distribution's libvirt binding (%d files)", linked)
+	case linked > 0:
 		log("    linked the distribution's libvirt binding (%d files)", linked)
 	}
 	return nil
