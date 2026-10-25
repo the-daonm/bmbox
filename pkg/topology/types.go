@@ -121,6 +121,8 @@ type BMC struct {
 	// Port is assigned from DefaultRedfishPort / DefaultIPMIPort when empty.
 	Port     int    `yaml:"port"`
 	Username string `yaml:"username"`
+	// Password, when empty, is generated on the first `up` and kept; see
+	// `bmbox credentials`.
 	Password string `yaml:"password"`
 }
 

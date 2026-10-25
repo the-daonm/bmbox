@@ -41,8 +41,8 @@ var consoleCmd = &cobra.Command{
 
 		sock := engine.SerialSocket(lab, node)
 		if _, err := os.Stat(sock); err != nil {
-			return fmt.Errorf("node %s is powered off (no serial console at %s). Power it on through its BMC:\n  %s",
-				node, sock, powerOnHint(domain, node, st))
+			return fmt.Errorf("node %s is powered off (no serial console at %s). Power it on through its BMC:\n  %s\n(PASSWORD: sudo bmbox credentials %s)",
+				node, sock, powerOnHint(domain, node, st), node)
 		}
 		end, err := console.Attach(console.Options{
 			Socket: sock,

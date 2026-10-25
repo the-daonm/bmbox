@@ -20,6 +20,8 @@ const (
 	maxDisksPerVM  = 8
 	maxNICsPerVM   = 8
 	minMTU, maxMTU = 68, 65535
+	// maxIPMIPassword is what IPMI 2.0 carries (bmc.MaxIPMIPassword).
+	maxIPMIPassword = 20
 )
 
 // ValidationError collects every problem found in a topology so the user can
@@ -318,6 +320,9 @@ func (t *Topology) validateNodes(v *validator) {
 			}
 			if b.Username == "" || strings.ContainsAny(b.Username, ": \t\n") {
 				v.addf(path+".bmc.username", "%q must be non-empty without ':' or whitespace", b.Username)
+			}
+			if b.Type == BMCIPMI && len(b.Password) > maxIPMIPassword {
+				v.addf(path+".bmc.password", "is longer than the %d characters IPMI allows", maxIPMIPassword)
 			}
 			if b.Port < 1 || b.Port > 65535 {
 				v.addf(path+".bmc.port", "%d is not a valid port", b.Port)

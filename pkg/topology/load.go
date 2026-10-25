@@ -121,9 +121,6 @@ func (t *Topology) ApplyDefaults() {
 			if n.BMC.Username == "" {
 				n.BMC.Username = "admin"
 			}
-			if n.BMC.Password == "" {
-				n.BMC.Password = "password"
-			}
 		}
 	}
 	t.assignBMCPorts()

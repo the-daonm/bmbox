@@ -341,6 +341,11 @@ func ensureBMCs(ctx context.Context, t *topology.Topology, st *workspace.LabStat
 			continue
 		}
 		spec := BMCSpec(t, n, ns.UUID, loader, opt.LibvirtURI, ws)
+		pw, generated, err := bmc.ResolvePassword(spec.Dir, n.BMC.Password, ws)
+		if err != nil {
+			return fmt.Errorf("node %s: %w", n.Name, err)
+		}
+		spec.Password = pw
 		res, err := bmcs.Ensure(ctx, spec, ws)
 		if err != nil {
 			return fmt.Errorf("node %s: %w", n.Name, err)
@@ -348,12 +353,17 @@ func ensureBMCs(ctx context.Context, t *topology.Topology, st *workspace.LabStat
 		ns.BMC = &workspace.BMCState{
 			Type: spec.Type, Address: spec.Address, Port: spec.Port,
 			Username: spec.Username, Unit: spec.Unit, Endpoint: spec.Endpoint(),
+			PasswordFile: bmc.PasswordPath(spec.Dir),
 		}
 		action := "running"
 		if res.Started {
 			action = "started"
 		}
-		log("    %-10s %-8s %-8s %s", n.Name, spec.Type, action, spec.Endpoint())
+		note := ""
+		if generated {
+			note = " (password generated, see: sudo bmbox credentials)"
+		}
+		log("    %-10s %-8s %-8s %s%s", n.Name, spec.Type, action, spec.Endpoint(), note)
 	}
 	return nil
 }

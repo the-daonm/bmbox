@@ -323,6 +323,8 @@ type BMCState struct {
 	Username string `json:"username"`
 	Unit     string `json:"unit"`
 	Endpoint string `json:"endpoint"`
+	// PasswordFile holds the password (root only).
+	PasswordFile string `json:"passwordFile,omitempty"`
 }
 
 func (w *Workspace) statePath(lab string) string {
