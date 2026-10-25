@@ -27,7 +27,7 @@ var setupCmd = &cobra.Command{
     dnf or pacman; on Debian and Ubuntu only dnsmasq-base, so no dnsmasq
     service starts
   - starts libvirt if it is not running
-  - creates a Python virtualenv with sushy-tools ` + setup.SushyToolsVersion + ` and virtualbmc
+  - creates an isolated Python virtualenv with sushy-tools ` + setup.SushyToolsVersion + ` and virtualbmc
     ` + setup.VirtualBMCVersion + `, the versions bmbox is tested with
   - remembers every tool path, so up needs no flags or variables
 
@@ -50,7 +50,8 @@ It is safe to run again. Requires root, except with --dry-run.`,
 		tools, err := setup.Run(setup.Options{
 			Out: out, System: setup.Host{Out: out},
 			DryRun: setupDryRun, SkipPackages: setupSkipPackages,
-			VenvDir: venv, Dnsmasq: known.Dnsmasq, IPXE: firstNonEmpty(ipxePath, known.IPXE),
+			VenvDir: venv, OwnsVenv: setupVenv == "",
+			Dnsmasq: known.Dnsmasq, IPXE: firstNonEmpty(ipxePath, known.IPXE),
 		})
 		if err != nil {
 			return err

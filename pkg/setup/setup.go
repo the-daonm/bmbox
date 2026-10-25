@@ -28,8 +28,8 @@ const (
 type PackageManager struct {
 	Name string
 	// Packages bmbox needs. libvirt's Python binding comes from the
-	// distribution: the virtualenv sees it (--system-site-packages)
-	// instead of compiling it against libvirt's headers.
+	// distribution and is linked into the virtualenv (see linkLibvirt)
+	// instead of being compiled against libvirt's headers.
 	Packages []string
 	// installed returns the command that succeeds when pkg is installed.
 	installed func(pkg string) []string
@@ -79,6 +79,10 @@ type System interface {
 	Check(name string, args ...string) (string, bool)
 	LookPath(name string) (string, error)
 	Exists(path string) bool
+	ReadFile(path string) (string, error)
+	WriteFile(path, content string) error
+	Symlink(target, link string) error
+	RemoveAll(path string) error
 }
 
 type Options struct {
@@ -90,11 +94,18 @@ type Options struct {
 	SkipPackages bool
 	// VenvDir is the virtualenv for sushy-tools and virtualbmc.
 	VenvDir string
+	// OwnsVenv says VenvDir is bmbox's own (the default), which setup may
+	// recreate even without the marker of older versions.
+	OwnsVenv bool
 	// Dnsmasq and IPXE are where those are, when not in a distribution
 	// path (given before, or with --ipxe).
 	Dnsmasq string
 	IPXE    string
 }
+
+// venvMarker marks a virtualenv created by bmbox, which setup may delete
+// and create again.
+const venvMarker = ".bmbox-venv"
 
 // DefaultVenvDir is the virtualenv in a workspace.
 func DefaultVenvDir(ws *workspace.Workspace) string { return filepath.Join(ws.Root, "tools", "venv") }
@@ -195,10 +206,23 @@ func ensureLibvirt(opt Options, log func(string, ...any)) error {
 	return run(opt, nil, "systemctl", "enable", "--now", unit)
 }
 
+// ensureVenv makes an isolated virtualenv with the BMC emulators. Host
+// packages must stay out of it: a host-wide pip install (an openstacksdk
+// in /usr/local, say) would shadow the versions sushy-tools needs.
 func ensureVenv(opt Options, log func(string, ...any)) error {
 	sys := opt.System
 	py := filepath.Join(opt.VenvDir, "bin", "python3")
-	if !sys.Exists(py) {
+	if cfg, err := sys.ReadFile(filepath.Join(opt.VenvDir, "pyvenv.cfg")); err == nil &&
+		strings.Contains(strings.ReplaceAll(cfg, " ", ""), "include-system-site-packages=true") {
+		if !sys.Exists(filepath.Join(opt.VenvDir, venvMarker)) && !opt.OwnsVenv {
+			return fmt.Errorf("%s sees the host's Python packages (include-system-site-packages): remove it or choose another --venv", opt.VenvDir)
+		}
+		log("    recreate virtualenv %s without the host's packages", opt.VenvDir)
+		if err := runf(opt, func() error { return sys.RemoveAll(opt.VenvDir) }, "rm -rf "+opt.VenvDir); err != nil {
+			return err
+		}
+	}
+	if !sys.Exists(py) || opt.DryRun && !sys.Exists(opt.VenvDir) {
 		python, err := sys.LookPath("python3")
 		if err != nil && !opt.DryRun {
 			return fmt.Errorf("python3 not found (install python3 and its venv module)")
@@ -207,9 +231,15 @@ func ensureVenv(opt Options, log func(string, ...any)) error {
 			python = "python3"
 		}
 		log("    create virtualenv %s", opt.VenvDir)
-		if err := run(opt, nil, python, "-m", "venv", "--system-site-packages", opt.VenvDir); err != nil {
+		if err := run(opt, nil, python, "-m", "venv", opt.VenvDir); err != nil {
 			return fmt.Errorf("create virtualenv: %w", err)
 		}
+		if err := runf(opt, func() error { return sys.WriteFile(filepath.Join(opt.VenvDir, venvMarker), "created by bmbox setup\n") }, "mark "+opt.VenvDir); err != nil {
+			return err
+		}
+	}
+	if err := linkLibvirt(opt, py, log); err != nil {
+		return err
 	}
 	want := "sushy-tools==" + SushyToolsVersion + " virtualbmc==" + VirtualBMCVersion
 	have, _ := sys.Check(py, "-c", `import importlib.metadata as m
@@ -224,16 +254,70 @@ for p in ("sushy-tools", "virtualbmc"):
 		log("    pip install %s", want)
 		if err := run(opt, nil, filepath.Join(opt.VenvDir, "bin", "pip"), "install", "--disable-pip-version-check",
 			"sushy-tools=="+SushyToolsVersion, "virtualbmc=="+VirtualBMCVersion); err != nil {
-			return fmt.Errorf("install BMC emulators: %w (if libvirt-python failed to build, install your distribution's python3-libvirt)", err)
+			return fmt.Errorf("install BMC emulators: %w", err)
 		}
 	}
 	if opt.DryRun {
 		return nil
 	}
-	if out, ok := sys.Check(py, "-c", "import libvirt, sushy_tools, virtualbmc"); !ok {
-		return fmt.Errorf("the virtualenv cannot import libvirt, sushy_tools and virtualbmc: %s (is python3-libvirt installed?)", strings.TrimSpace(out))
+	if out, ok := sys.Check(py, "-c", ImportCheck); !ok {
+		return fmt.Errorf("the BMC emulators do not load in %s: %s", opt.VenvDir, lastLine(out))
 	}
 	return nil
+}
+
+// ImportCheck loads the modules the BMC units run, as they would.
+const ImportCheck = "import libvirt, sushy_tools.emulator.main, virtualbmc.vbmc"
+
+// linkLibvirt links the distribution's libvirt binding (libvirt*.py, its
+// compiled modules and metadata) into the virtualenv, so it is used, and
+// pip sees libvirt-python installed, without exposing other host packages.
+func linkLibvirt(opt Options, py string, log func(string, ...any)) error {
+	sys := opt.System
+	if opt.DryRun && !sys.Exists(py) {
+		log("    link the distribution's libvirt binding into the virtualenv")
+		return nil
+	}
+	out, ok := sys.Check("python3", "-c", `import glob, os, libvirt
+d = os.path.dirname(libvirt.__file__)
+print("\n".join(sorted(glob.glob(os.path.join(d, "libvirt*")))))`)
+	if !ok {
+		return fmt.Errorf("the host's python3 cannot import libvirt: install python3-libvirt (libvirt-python on Arch): %s", lastLine(out))
+	}
+	site, ok := sys.Check(py, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])")
+	if !ok {
+		return fmt.Errorf("find the virtualenv's site-packages: %s", lastLine(site))
+	}
+	site = strings.TrimSpace(site)
+	linked := 0
+	for _, src := range strings.Fields(out) {
+		dst := filepath.Join(site, filepath.Base(src))
+		if sys.Exists(dst) {
+			continue
+		}
+		if err := runf(opt, func() error { return sys.Symlink(src, dst) }, "ln -s "+src+" "+dst); err != nil {
+			return fmt.Errorf("link libvirt binding: %w", err)
+		}
+		linked++
+	}
+	if linked > 0 {
+		log("    linked the distribution's libvirt binding (%d files)", linked)
+	}
+	return nil
+}
+
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	return lines[len(lines)-1]
+}
+
+// runf performs a change through the System, or prints it on a dry run.
+func runf(opt Options, f func() error, what string) error {
+	if opt.DryRun {
+		fmt.Fprintf(opt.Out, "    would run: %s\n", what)
+		return nil
+	}
+	return f()
 }
 
 func run(opt Options, env []string, args ...string) error {
@@ -264,6 +348,15 @@ func (Host) Check(name string, args ...string) (string, bool) {
 func (Host) LookPath(name string) (string, error) { return exec.LookPath(name) }
 
 func (Host) Exists(path string) bool {
-	_, err := os.Stat(path)
+	_, err := os.Lstat(path)
 	return err == nil
 }
+
+func (Host) ReadFile(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	return string(b), err
+}
+
+func (Host) WriteFile(path, content string) error { return os.WriteFile(path, []byte(content), 0o644) }
+func (Host) Symlink(target, link string) error    { return os.Symlink(target, link) }
+func (Host) RemoveAll(path string) error          { return os.RemoveAll(path) }
