@@ -5,6 +5,11 @@
 
 **Virtual bare-metal labs from a single YAML file.**
 
+> **Status: beta.** bmbox is used and tested end to end, but before 1.0 the
+> topology format (`bmbox.io/v1alpha1`) and command-line behaviour can still
+> change between minor versions. Changes are listed in the
+> [changelog](CHANGELOG.md).
+
 bmbox builds a lab of "bare-metal" servers on one Linux host: KVM + UEFI
 virtual machines that PXE boot, with a dedicated Redfish or IPMI BMC each,
 on their own networks with DHCP and iPXE. Use it to develop and test
@@ -65,8 +70,9 @@ node1  redfish  admin     q7XkM2pR9vTb3nWc  https://127.0.0.1:8300/redfish/v1/Sy
 - For BMCs: Python 3 (bmbox installs sushy-tools and virtualbmc itself)
 - For DHCP and netboot: dnsmasq and iPXE
 
-`bmbox setup` installs all of these on Debian, Ubuntu, Fedora, RHEL and
-Arch.
+`bmbox setup` installs all of these on Debian, Ubuntu, Fedora, RHEL 10 and
+Arch (CI runs it on each). RHEL 9 and its rebuilds are not supported: their
+Python 3.9 is too old for sushy-tools.
 
 ## Install
 
@@ -275,7 +281,8 @@ lab (`e2e`, subnet 172.30.90.0/24, BMC ports 8390/6390): up, Redfish and
 IPMI power control, netboot to a kernel on the serial console, console,
 convergence and `--prune`, traffic past a `FORWARD` drop, a simulated reboot,
 locking and destroy. It fails if anything outside its lab changed on the
-host. CI runs it on a self-hosted runner labelled `bmbox-e2e`.
+host. CI runs it on every pull request on GitHub-hosted runners (which
+have KVM), after preparing them with `bmbox setup`.
 
 ```
 cmd/            CLI commands
