@@ -157,7 +157,8 @@ dhcp_active() { systemctl is-active --quiet "$DHCP_UNIT"; }
 pools() { vsh pool-list --all --name | awk 'NF {print $1}'; }
 e2e_pool() { pools | grep -x "bmbox-$LAB"; }
 e2e_rules() { for t in iptables ip6tables; do sudo $t -w -S BMBOX-FORWARD 2>/dev/null | grep -F "bmbox:$LAB/"; done; }
-leftovers() { { e2e_domains; e2e_bridges; e2e_units; e2e_pool; sudo ls -d "$DHCP_DIR" 2>/dev/null; e2e_rules; } | grep -c .; }
+BOOT_UNIT=bmbox-$LAB-boot.service
+leftovers() { { e2e_domains; e2e_bridges; e2e_units; e2e_pool; sudo ls -d "$DHCP_DIR" "/etc/systemd/system/$BOOT_UNIT" 2>/dev/null; e2e_rules; } | grep -c .; }
 
 # Everything outside the e2e lab that bmbox could touch.
 host_snapshot() {
@@ -343,6 +344,32 @@ else
 fi
 fwd_cleanup
 
+section "Reboot recovery"
+check "up enabled the boot unit" systemctl is-enabled --quiet "$BOOT_UNIT"
+# Remove what a reboot loses: the BMC and dnsmasq units, the bridges and
+# the FORWARD rules. Domains, disks and the pool stay. The nodes are off.
+sudo systemctl stop "bmbox-$LAB-n1-bmc.service" "bmbox-$LAB-n2-bmc.service" "$DHCP_UNIT"
+for br in $(e2e_bridges); do sudo ip link del "$br"; done
+for t in iptables ip6tables; do
+	sudo $t -w -S BMBOX-FORWARD 2>/dev/null | grep -F "bmbox:$LAB/" | sed -e 's/^-A /-D /' -e 's/"//g' |
+		while read -r r; do sudo $t -w $r; done
+done
+rebooted() {
+	[ "$(e2e_bridges | wc -l)" -eq 0 ] && ! e2e_rules | grep -q . &&
+		! systemctl is-active --quiet "bmbox-$LAB-n1-bmc.service" && ! dhcp_active
+}
+check "simulated reboot: no bridge, rule or service left" rebooted
+T_BOOT=$(date +%s)
+check "boot unit runs up from the saved topology" sudo systemctl restart "$BOOT_UNIT"
+check "bridges are back" test "$(e2e_bridges | wc -l)" -eq 2
+check "BMCs and dnsmasq are back" \
+	bash -c "systemctl is-active --quiet bmbox-$LAB-n1-bmc.service && systemctl is-active --quiet bmbox-$LAB-n2-bmc.service && systemctl is-active --quiet $DHCP_UNIT"
+check "firewall rule is back" sudo iptables -w -C BMBOX-FORWARD "${rule_args[@]}"
+check "Redfish answers with the same password" is_power Off
+check "IPMI answers with the same password" bash -c 'ipmi power status | grep -q "is off"'
+check "the boot run is in the journal" \
+	bash -c "sudo journalctl -u $BOOT_UNIT --since @$T_BOOT --no-pager | grep -q 'is up'"
+
 section "Locking"
 # The workspace belongs to root: hold the lab lock from a root process for
 # a few seconds. (Killing flock would not do: its child keeps the lock.)
@@ -356,7 +383,7 @@ check "lock released" wait_for 5 lock_free
 
 section "destroy"
 check "destroy succeeds" bm destroy --lab "$LAB"
-check "nothing of lab $LAB is left" test "$(leftovers)" -eq 0
+check "nothing of lab $LAB is left (boot unit included)" test "$(leftovers)" -eq 0
 check "workspace of lab $LAB removed" test ! -e "$WS/labs/$LAB"
 host_snapshot >"$TMP/after"
 check "rest of the host unchanged (domains, pools, bridges, units, sysctls)" diff "$TMP/before" "$TMP/after"
