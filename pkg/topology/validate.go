@@ -50,6 +50,17 @@ func (v *validator) name(path, s string, maxLen int) {
 	}
 }
 
+// reservedLabNames are entries of bmbox's data directory (/var/lib/bmbox)
+// that are not labs: per-lab netboot data lives in /var/lib/bmbox/<lab>.
+var reservedLabNames = map[string]bool{"labs": true, "tools": true}
+
+func (v *validator) labName(path, s string) {
+	v.name(path, s, maxLabNameLen)
+	if reservedLabNames[s] {
+		v.addf(path, "%q is reserved by bmbox, choose another name", s)
+	}
+}
+
 func (v *validator) boot(path string, boot []string) {
 	seen := map[string]bool{}
 	for i, b := range boot {
@@ -69,7 +80,7 @@ func (v *validator) boot(path string, boot []string) {
 // this must pass before one is used.
 func ValidateLabName(name string) error {
 	v := &validator{}
-	v.name("lab name", name, maxLabNameLen)
+	v.labName("lab name", name)
 	if len(v.problems) > 0 {
 		return fmt.Errorf("%s", v.problems[0])
 	}
@@ -86,7 +97,7 @@ func (t *Topology) Validate() error {
 	if t.Kind != Kind {
 		v.addf("kind", "must be %q, got %q", Kind, t.Kind)
 	}
-	v.name("metadata.name", t.Metadata.Name, maxLabNameLen)
+	v.labName("metadata.name", t.Metadata.Name)
 
 	if !filepath.IsAbs(t.Spec.Storage.Path) {
 		v.addf("spec.storage.path", "must be an absolute path, got %q", t.Spec.Storage.Path)

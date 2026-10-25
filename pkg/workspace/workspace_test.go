@@ -65,3 +65,68 @@ func TestStateVersion(t *testing.T) {
 		t.Fatalf("newer state: %v", err)
 	}
 }
+
+func TestLegacyLabIsMovedOnLock(t *testing.T) {
+	root, legacy := t.TempDir(), t.TempDir()
+	old := &Workspace{Root: legacy, uid: -1, gid: -1}
+	if err := old.SaveState(&LabState{Lab: "lab1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := old.WriteFile(old.BMCDir("lab1", "n1")+"/sushy.conf", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := old.SaveTools(Tools{VBMC: "/venv/bin/vbmc"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ws := &Workspace{Root: root, legacy: legacy, uid: -1, gid: -1}
+	if labs, _ := ws.Labs(); len(labs) != 1 || labs[0] != "lab1" {
+		t.Fatalf("Labs = %v", labs)
+	}
+	if got := ws.LabDir("lab1"); got != legacy+"/labs/lab1" {
+		t.Fatalf("before the move LabDir = %s", got)
+	}
+	if got := ws.LoadTools().VBMC; got != "/venv/bin/vbmc" {
+		t.Fatalf("legacy tools not read: %q", got)
+	}
+
+	unlock, err := ws.Lock("lab1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	if got := ws.LabDir("lab1"); got != root+"/labs/lab1" {
+		t.Fatalf("after the move LabDir = %s", got)
+	}
+	if st, err := ws.LoadState("lab1"); err != nil || st == nil {
+		t.Fatalf("moved state: %v, %v", st, err)
+	}
+	if exists(ws.BMCDir("lab1", "n1")) {
+		t.Error("BMC dir was copied; up must regenerate it")
+	}
+	if !exists(legacy + "/labs/lab1") {
+		t.Fatal("legacy copy removed before up re-pointed the BMCs")
+	}
+	if err := ws.RemoveLegacyLab("lab1"); err != nil || exists(legacy+"/labs/lab1") {
+		t.Fatalf("RemoveLegacyLab: %v", err)
+	}
+	if labs, _ := ws.Labs(); len(labs) != 1 {
+		t.Fatalf("Labs after the move = %v", labs)
+	}
+}
+
+func TestRemoveLabRemovesLegacyCopy(t *testing.T) {
+	root, legacy := t.TempDir(), t.TempDir()
+	ws := &Workspace{Root: root, legacy: legacy, uid: -1, gid: -1}
+	for _, w := range []*Workspace{{Root: legacy, uid: -1, gid: -1}, {Root: root, uid: -1, gid: -1}} {
+		if err := w.SaveState(&LabState{Lab: "lab1"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ws.RemoveLab("lab1"); err != nil {
+		t.Fatal(err)
+	}
+	if labs, _ := ws.Labs(); len(labs) != 0 {
+		t.Fatalf("Labs after RemoveLab = %v", labs)
+	}
+}

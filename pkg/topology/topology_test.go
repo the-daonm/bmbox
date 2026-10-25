@@ -216,7 +216,7 @@ func TestValidateLabName(t *testing.T) {
 	if err := ValidateLabName("demo-1"); err != nil {
 		t.Errorf("demo-1: %v", err)
 	}
-	for _, bad := range []string{"", "..", "../..", "a/b", ".", "Demo", "-a"} {
+	for _, bad := range []string{"", "..", "../..", "a/b", ".", "Demo", "-a", "labs", "tools"} {
 		if ValidateLabName(bad) == nil {
 			t.Errorf("%q accepted", bad)
 		}

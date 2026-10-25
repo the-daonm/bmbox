@@ -155,6 +155,13 @@ func Up(ctx context.Context, t *topology.Topology, raw []byte, ws *workspace.Wor
 		if serr := ws.SaveState(st); serr != nil && err == nil {
 			err = fmt.Errorf("save state: %w", serr)
 		}
+		// The BMCs now run from the new workspace: drop a copy left in
+		// the per-user workspace of older versions.
+		if err == nil {
+			if rerr := ws.RemoveLegacyLab(lab); rerr != nil {
+				log("    warning: could not remove the old workspace copy: %v", rerr)
+			}
+		}
 	}()
 
 	// 1. Networks
