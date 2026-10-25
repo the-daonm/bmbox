@@ -1,27 +1,45 @@
-# End-to-end test against real libvirt, on a self-hosted runner: a KVM host
-# with sudo and the bmbox tools (run `sudo bmbox setup` on it once), with
-# the labels below. It brings up and destroys its own lab only.
+# End-to-end test against real libvirt on a GitHub-hosted runner, which
+# has KVM. The host is prepared with `bmbox setup` itself, and Docker on
+# the runner sets the FORWARD policy to DROP, as on many real hosts.
 name: e2e
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: e2e-${{ github.repository }}
-  cancel-in-progress: false
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   e2e:
-    runs-on: [self-hosted, linux, kvm, bmbox-e2e]
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: make e2e
+      - name: Let the runner use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+      - run: make build
+      - name: bmbox setup
+        run: sudo bin/bmbox setup
+      - name: bmbox doctor
+        run: sudo bin/bmbox doctor
+      - name: End-to-end test
+        run: BMBOX=bin/bmbox scripts/e2e.sh
+      - name: Logs
+        if: failure()
+        run: |
+          sudo journalctl -u 'bmbox-*' --no-pager -n 300 || true
+          sudo tail -n 50 /var/log/libvirt/qemu/*.log || true
