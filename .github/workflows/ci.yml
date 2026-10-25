@@ -22,5 +22,33 @@ jobs:
         run: go test -race ./...
       - name: Build
         run: make build && bin/bmbox --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bmbox
+          path: bin/bmbox
       - name: e2e script syntax
         run: bash -n scripts/e2e.sh
+
+  # `bmbox setup` on each distribution the README names: package names,
+  # the isolated virtualenv and its libvirt binding. Containers have no
+  # systemd or KVM, so libvirt itself is covered by the e2e workflow.
+  setup:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["debian:stable", "ubuntu:24.04", "fedora:latest", "almalinux:9", "archlinux:latest"]
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bmbox
+      - run: install -m 0755 bmbox /usr/local/bin/bmbox && bmbox --version
+      - name: Sync the package database (Arch)
+        if: startsWith(matrix.image, 'archlinux')
+        run: pacman -Sy --noconfirm
+      - name: bmbox setup
+        run: bmbox setup
+      - name: bmbox setup again changes nothing
+        run: bmbox setup | tee /tmp/again && ! grep -q "would run\|installing\|pip install" /tmp/again
