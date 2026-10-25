@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -79,6 +81,56 @@ func (m *Manager) Stop(ctx context.Context, unit string) error {
 	<-done
 	_ = m.conn.ResetFailedUnitContext(ctx, unit)
 	return nil
+}
+
+// UnitDir is where persistent unit files are installed.
+var UnitDir = "/etc/systemd/system"
+
+// InstallUnit writes a persistent unit file, reloads systemd when it
+// changed and enables the unit, so it starts at boot. It reports whether
+// the file changed.
+func (m *Manager) InstallUnit(ctx context.Context, name, content string) (bool, error) {
+	path := filepath.Join(UnitDir, name)
+	changed := false
+	if old, err := os.ReadFile(path); err != nil || string(old) != content {
+		logging.Debugf("systemd: write %s", path)
+		tmp := path + ".tmp"
+		if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+			return false, err
+		}
+		if err := os.Rename(tmp, path); err != nil {
+			return false, err
+		}
+		if err := m.conn.ReloadContext(ctx); err != nil {
+			return true, fmt.Errorf("systemd daemon-reload: %w", err)
+		}
+		changed = true
+	}
+	logging.Debugf("systemd: enable %s", name)
+	if _, _, err := m.conn.EnableUnitFilesContext(ctx, []string{name}, false, true); err != nil {
+		return changed, fmt.Errorf("enable %s: %w", name, err)
+	}
+	return changed, nil
+}
+
+// RemoveUnit disables a unit installed by InstallUnit and deletes its
+// file. It reports whether there was one.
+func (m *Manager) RemoveUnit(ctx context.Context, name string) (bool, error) {
+	path := filepath.Join(UnitDir, name)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return false, nil
+	}
+	logging.Debugf("systemd: disable and remove %s", name)
+	if _, err := m.conn.DisableUnitFilesContext(ctx, []string{name}, false); err != nil {
+		return false, fmt.Errorf("disable %s: %w", name, err)
+	}
+	if err := os.Remove(path); err != nil {
+		return false, err
+	}
+	if err := m.conn.ReloadContext(ctx); err != nil {
+		return true, fmt.Errorf("systemd daemon-reload: %w", err)
+	}
+	return true, nil
 }
 
 // State returns the unit's ActiveState ("active", "failed", "inactive"...).

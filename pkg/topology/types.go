@@ -30,7 +30,13 @@ type Spec struct {
 	// Netboot is what nodes boot over the network from the lab's DHCP
 	// networks. Without it, those networks only hand out addresses.
 	Netboot *Netboot `yaml:"netboot"`
+	// Autostart brings the lab back when the host boots (default true):
+	// bridges, firewall rules, DHCP and BMCs do not survive a reboot.
+	Autostart *bool `yaml:"autostart"`
 }
+
+// AutostartEnabled reports whether the lab comes back at boot.
+func (s *Spec) AutostartEnabled() bool { return s.Autostart == nil || *s.Autostart }
 
 // NodeDefaults are applied to every node that leaves the field unset.
 type NodeDefaults struct {

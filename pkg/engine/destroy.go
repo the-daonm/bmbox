@@ -187,13 +187,25 @@ func Destroy(ctx context.Context, lab string, t *topology.Topology, ws *workspac
 	if err != nil {
 		fail(err)
 	}
-	if st == nil && t == nil && len(d.nodes) == 0 && len(d.units) == 0 && len(d.bridges) == 0 && d.dhcp == "" && len(d.rules) == 0 {
+	_, bootErr := os.Stat(filepath.Join(systemd.UnitDir, BootUnit(lab)))
+	if st == nil && t == nil && len(d.nodes) == 0 && len(d.units) == 0 && len(d.bridges) == 0 && d.dhcp == "" && len(d.rules) == 0 && bootErr != nil {
 		if st == nil {
 			_ = ws.RemoveLab(lab) // only the lock we just created
 		}
 		return fmt.Errorf("nothing found for lab %q (no state in %s, no topology, nothing on the host)", lab, ws.LabDir(lab))
 	}
 	p := planDestroy(lab, t, st, d)
+
+	log("==> Boot")
+	if sd != nil {
+		// Disable it first, so a reboot during destroy does not bring the
+		// lab back half-way.
+		if removed, err := sd.RemoveUnit(ctx, BootUnit(lab)); err != nil {
+			fail(err)
+		} else if removed {
+			log("    autostart  removed %s", BootUnit(lab))
+		}
+	}
 
 	log("==> BMCs")
 	if sd != nil {

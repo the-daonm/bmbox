@@ -379,6 +379,11 @@ func (w *Workspace) SaveState(s *LabState) error {
 	return w.WriteFile(w.statePath(s.Lab), append(b, '\n'))
 }
 
+// LoadTopology returns the topology snapshot of the lab's last up.
+func (w *Workspace) LoadTopology(lab string) ([]byte, error) {
+	return os.ReadFile(filepath.Join(w.LabDir(lab), "topology.yaml"))
+}
+
 // SaveTopology snapshots the applied topology. It may hold BMC passwords,
 // so only root can read it.
 func (w *Workspace) SaveTopology(lab string, raw []byte) error {

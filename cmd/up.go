@@ -12,6 +12,7 @@ import (
 	"bmbox/pkg/bmc"
 	"bmbox/pkg/engine"
 	"bmbox/pkg/netboot"
+	"bmbox/pkg/topology"
 	"bmbox/pkg/workspace"
 )
 
@@ -31,16 +32,18 @@ a private UEFI NVRAM per node, defines each node in libvirt in the SHUTOFF
 state, starts the lab's dnsmasq (DHCP and iPXE netboot) when a network has
 dhcp, then one emulated BMC (Redfish or IPMI) per node, all as systemd
 units. Running it again converges to the topology without wiping existing
-disks or NVRAM. Requires root.`,
+disks or NVRAM. With --lab and no --file, it re-applies the topology the
+lab's last up saved; the boot unit up installs does this after a reboot.
+Requires root.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		t, raw, err := loadTopology()
-		if err != nil {
-			return err
-		}
 		ws, err := workspace.Open()
 		if err != nil {
 			return fmt.Errorf("open workspace: %w", err)
+		}
+		t, raw, err := upTopology(cmd, ws)
+		if err != nil {
+			return err
 		}
 		// Tool paths: flag, then environment, then what worked last time.
 		tools := ws.LoadTools()
@@ -67,6 +70,35 @@ disks or NVRAM. Requires root.`,
 	},
 }
 
+// upTopology is the topology up applies: --file, else the snapshot of
+// --lab, else topology.yaml.
+func upTopology(cmd *cobra.Command, ws *workspace.Workspace) (*topology.Topology, []byte, error) {
+	if labFlag != "" {
+		if err := topology.ValidateLabName(labFlag); err != nil {
+			return nil, nil, fmt.Errorf("--lab: %w", err)
+		}
+	}
+	if labFlag == "" || cmd.Flags().Changed("file") {
+		t, raw, err := loadTopology()
+		if err == nil && labFlag != "" && t.Metadata.Name != labFlag {
+			return nil, nil, fmt.Errorf("--lab %s does not match %s (lab %q)", labFlag, topologyFile, t.Metadata.Name)
+		}
+		return t, raw, err
+	}
+	raw, err := ws.LoadTopology(labFlag)
+	if os.IsNotExist(err) {
+		return nil, nil, fmt.Errorf("lab %q has no saved topology in %s: run up with --file first", labFlag, ws.LabDir(labFlag))
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	t, err := topology.Parse(raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("saved topology of lab %s: %w", labFlag, err)
+	}
+	return t, raw, nil
+}
+
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if v != "" {
@@ -81,6 +113,7 @@ func init() {
 	upCmd.Flags().StringVar(&vbmcPath, "vbmc", "", "path to vbmc, used to find virtualbmc's python (default: $"+bmc.EnvVBMC+", last used, or PATH)")
 	upCmd.Flags().StringVar(&dnsmasqPath, "dnsmasq", "", "path to dnsmasq (default: $"+netboot.EnvDnsmasq+", last used, PATH or /usr/sbin)")
 	upCmd.Flags().StringVar(&ipxePath, "ipxe", "", "path to the iPXE UEFI binary, e.g. snponly.efi (default: $"+netboot.EnvIPXE+", last used, or distribution paths)")
+	upCmd.Flags().StringVar(&labFlag, "lab", "", "re-apply the topology saved by this lab's last up (when --file is not given)")
 	upCmd.Flags().BoolVar(&prune, "prune", false, "remove nodes, BMCs, disks and networks of this lab that are no longer in the topology")
 	rootCmd.AddCommand(upCmd)
 }

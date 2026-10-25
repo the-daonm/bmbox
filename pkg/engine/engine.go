@@ -327,7 +327,12 @@ func Up(ctx context.Context, t *topology.Topology, raw []byte, ws *workspace.Wor
 		}
 	}
 
-	// 6. Resources of this lab that are no longer in the topology
+	// 6. Bring the lab back after a reboot of the host
+	if err := ensureBootUnit(ctx, t, sd, ws, opt, log); err != nil {
+		return st, err
+	}
+
+	// 7. Resources of this lab that are no longer in the topology
 	return st, reconcile(ctx, t, hv, sd, opt, log)
 }
 
