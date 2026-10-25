@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/the-daonm/bmbox/pkg/systemd"
@@ -13,16 +14,21 @@ import (
 func TestVersionCheck(t *testing.T) {
 	dir := t.TempDir()
 	py := filepath.Join(dir, "python")
-	os.WriteFile(py, []byte("#!/bin/sh\necho 2.2.0\n"), 0o755)
-	if c := versionCheck("redfish BMC", "sushy-tools", py, "2.2.0"); c.Status != OK {
+	os.WriteFile(py, []byte("#!/bin/sh\ncase \"$2\" in import\\ libvirt*) exit 0;; esac\necho 2.2.0\n"), 0o755)
+	if c := versionCheck("redfish BMC", "sushy-tools", "m", py, "2.2.0"); c.Status != OK {
 		t.Errorf("same version: %+v", c)
 	}
-	if c := versionCheck("redfish BMC", "sushy-tools", py, "9.9.9"); c.Status != Warn {
+	if c := versionCheck("redfish BMC", "sushy-tools", "m", py, "9.9.9"); c.Status != Warn {
 		t.Errorf("other version: %+v", c)
 	}
 	os.WriteFile(py, []byte("#!/bin/sh\necho 'PackageNotFoundError: sushy-tools' >&2\nexit 1\n"), 0o755)
-	if c := versionCheck("redfish BMC", "sushy-tools", py, "2.2.0"); c.Status != Fail {
+	if c := versionCheck("redfish BMC", "sushy-tools", "m", py, "2.2.0"); c.Status != Fail {
 		t.Errorf("missing package: %+v", c)
+	}
+	// Installed, but the module does not import.
+	os.WriteFile(py, []byte("#!/bin/sh\ncase \"$2\" in import\\ libvirt*) echo \"TypeError: 'ABCMeta' object is not subscriptable\" >&2; exit 1;; esac\necho 2.2.0\n"), 0o755)
+	if c := versionCheck("redfish BMC", "sushy-tools", "m", py, "2.2.0"); c.Status != Fail || !strings.Contains(c.Detail, "does not load") {
+		t.Errorf("broken import: %+v", c)
 	}
 }
 

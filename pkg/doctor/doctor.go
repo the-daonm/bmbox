@@ -155,10 +155,16 @@ func lastLine(s string) string {
 	return lines[len(lines)-1]
 }
 
-func versionCheck(name, pkg, python, want string) Check {
+func versionCheck(name, pkg, module, python, want string) Check {
 	got, err := pythonPackageVersion(python, pkg)
 	if err != nil {
 		return Check{Name: name, Status: Fail, Detail: err.Error(), Fix: "sudo bmbox setup"}
+	}
+	// Load it as the BMC unit will: an installed package can still fail
+	// to import, e.g. when host packages shadow its dependencies.
+	if out, err := exec.Command(python, "-c", "import libvirt, "+module).CombinedOutput(); err != nil {
+		return Check{Name: name, Status: Fail, Detail: fmt.Sprintf("%s %s does not load: %s", pkg, got, lastLine(string(out))),
+			Fix: "sudo bmbox setup (installs it in an isolated virtualenv)"}
 	}
 	if got != want {
 		return Check{Name: name, Status: Warn, Detail: fmt.Sprintf("%s %s (bmbox is tested with %s)", pkg, got, want),
@@ -176,7 +182,7 @@ func checkRedfish(sushy string) Check {
 	if err != nil {
 		return Check{Name: "redfish BMC", Status: Warn, Detail: err.Error()}
 	}
-	return versionCheck("redfish BMC", "sushy-tools", python, setup.SushyToolsVersion)
+	return versionCheck("redfish BMC", "sushy-tools", "sushy_tools.emulator.main", python, setup.SushyToolsVersion)
 }
 
 func checkIPMI(vbmc string) Check {
@@ -184,7 +190,7 @@ func checkIPMI(vbmc string) Check {
 	if err != nil {
 		return Check{Name: "ipmi BMC", Status: Warn, Detail: err.Error() + " (needed by ipmi BMCs)", Fix: "sudo bmbox setup"}
 	}
-	return versionCheck("ipmi BMC", "virtualbmc", t.VBMCPython, setup.VirtualBMCVersion)
+	return versionCheck("ipmi BMC", "virtualbmc", "virtualbmc.vbmc", t.VBMCPython, setup.VirtualBMCVersion)
 }
 
 func checkDnsmasq(dnsmasq string) Check {
