@@ -1,0 +1,26 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Lint (gofmt, vet, staticcheck)
+        run: make lint
+      - name: Unit tests
+        run: go test -race ./...
+      - name: Build
+        run: make build && bin/bmbox --version
+      - name: e2e script syntax
+        run: bash -n scripts/e2e.sh
