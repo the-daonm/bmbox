@@ -14,6 +14,9 @@ spec:
   # storage:
   #   path: /var/lib/libvirt/bmbox/demo
 
+  # Bring the lab back when the host reboots (default true).
+  # autostart: false
+
   # Leave empty to let libvirt (domain capabilities) pick the OVMF firmware.
   # uefi:
   #   loader: /usr/share/OVMF/OVMF_CODE_4M.fd
@@ -43,7 +46,9 @@ spec:
           ip: 172.30.10.11     # fixed DHCP address
         - network: data
       bmc:
-        type: redfish
+        type: redfish        # HTTPS by default; trust /var/lib/bmbox/ca/ca.crt
+        # tls: false         # plain HTTP instead
+        # No password: one is generated and kept (sudo bmbox credentials).
 
     - name: node2
       nics:
@@ -52,3 +57,4 @@ spec:
       bmc:
         type: ipmi
         port: 6231
+        # passwordEnv: NODE2_BMC_PASSWORD   # or passwordFile: /etc/bmbox/node2.pw
