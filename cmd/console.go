@@ -7,10 +7,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bmbox/pkg/console"
-	"bmbox/pkg/engine"
-	"bmbox/pkg/topology"
-	"bmbox/pkg/workspace"
+	"github.com/the-daonm/bmbox/pkg/console"
+	"github.com/the-daonm/bmbox/pkg/engine"
+	"github.com/the-daonm/bmbox/pkg/topology"
+	"github.com/the-daonm/bmbox/pkg/workspace"
 )
 
 var consoleCmd = &cobra.Command{

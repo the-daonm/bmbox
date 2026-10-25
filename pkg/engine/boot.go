@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"bmbox/pkg/systemd"
-	"bmbox/pkg/topology"
-	"bmbox/pkg/workspace"
+	"github.com/the-daonm/bmbox/pkg/systemd"
+	"github.com/the-daonm/bmbox/pkg/topology"
+	"github.com/the-daonm/bmbox/pkg/workspace"
 )
 
 // Bridges, firewall rules, sysctls, serial sockets and the BMC and dnsmasq

@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bmbox/pkg/engine"
-	"bmbox/pkg/hypervisor"
+	"github.com/the-daonm/bmbox/pkg/engine"
+	"github.com/the-daonm/bmbox/pkg/hypervisor"
 )
 
 var renderCmd = &cobra.Command{

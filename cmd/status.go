@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bmbox/pkg/engine"
-	"bmbox/pkg/workspace"
+	"github.com/the-daonm/bmbox/pkg/engine"
+	"github.com/the-daonm/bmbox/pkg/workspace"
 )
 
 var statusCmd = &cobra.Command{

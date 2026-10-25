@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"bmbox/pkg/systemd"
+	"github.com/the-daonm/bmbox/pkg/systemd"
 )
 
 const (

@@ -1,4 +1,4 @@
-module bmbox
+module github.com/the-daonm/bmbox
 
 go 1.27.1
 

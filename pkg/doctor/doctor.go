@@ -10,15 +10,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"bmbox/pkg/bmc"
-	"bmbox/pkg/engine"
-	"bmbox/pkg/hypervisor"
-	"bmbox/pkg/netboot"
-	"bmbox/pkg/network"
-	"bmbox/pkg/setup"
-	"bmbox/pkg/systemd"
-	"bmbox/pkg/topology"
-	"bmbox/pkg/workspace"
+	"github.com/the-daonm/bmbox/pkg/bmc"
+	"github.com/the-daonm/bmbox/pkg/engine"
+	"github.com/the-daonm/bmbox/pkg/hypervisor"
+	"github.com/the-daonm/bmbox/pkg/netboot"
+	"github.com/the-daonm/bmbox/pkg/network"
+	"github.com/the-daonm/bmbox/pkg/setup"
+	"github.com/the-daonm/bmbox/pkg/systemd"
+	"github.com/the-daonm/bmbox/pkg/topology"
+	"github.com/the-daonm/bmbox/pkg/workspace"
 )
 
 type Status string

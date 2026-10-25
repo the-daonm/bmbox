@@ -9,7 +9,7 @@ import (
 	"github.com/digitalocean/go-libvirt"
 	"libvirt.org/go/libvirtxml"
 
-	"bmbox/pkg/topology"
+	"github.com/the-daonm/bmbox/pkg/topology"
 )
 
 // Firmware is the UEFI image pair used by every node of a lab.

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"bmbox/pkg/topology"
+	"github.com/the-daonm/bmbox/pkg/topology"
 )
 
 func TestFindOrphans(t *testing.T) {

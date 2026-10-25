@@ -15,7 +15,7 @@ import (
 	sdbus "github.com/coreos/go-systemd/v22/dbus"
 	"github.com/godbus/dbus/v5"
 
-	"bmbox/pkg/logging"
+	"github.com/the-daonm/bmbox/pkg/logging"
 )
 
 type Manager struct {

@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"bmbox/cmd"
+	"github.com/the-daonm/bmbox/cmd"
 )
 
 func main() {

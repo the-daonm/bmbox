@@ -9,7 +9,7 @@ import (
 
 	"github.com/digitalocean/go-libvirt"
 
-	"bmbox/pkg/logging"
+	"github.com/the-daonm/bmbox/pkg/logging"
 )
 
 const DefaultURI = "qemu:///system"

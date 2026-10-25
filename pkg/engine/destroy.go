@@ -8,13 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"bmbox/pkg/bmc"
-	"bmbox/pkg/hypervisor"
-	"bmbox/pkg/netboot"
-	"bmbox/pkg/network"
-	"bmbox/pkg/systemd"
-	"bmbox/pkg/topology"
-	"bmbox/pkg/workspace"
+	"github.com/the-daonm/bmbox/pkg/bmc"
+	"github.com/the-daonm/bmbox/pkg/hypervisor"
+	"github.com/the-daonm/bmbox/pkg/netboot"
+	"github.com/the-daonm/bmbox/pkg/network"
+	"github.com/the-daonm/bmbox/pkg/systemd"
+	"github.com/the-daonm/bmbox/pkg/topology"
+	"github.com/the-daonm/bmbox/pkg/workspace"
 )
 
 // discovered is what is actually present on the host for a lab, found

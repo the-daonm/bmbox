@@ -9,7 +9,7 @@ import (
 	"github.com/digitalocean/go-libvirt"
 	"libvirt.org/go/libvirtxml"
 
-	"bmbox/pkg/logging"
+	"github.com/the-daonm/bmbox/pkg/logging"
 )
 
 // MetadataNS tags domains created by bmbox so they are never confused with

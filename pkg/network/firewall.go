@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"bmbox/pkg/logging"
+	"github.com/the-daonm/bmbox/pkg/logging"
 )
 
 // ForwardChain holds bmbox's rules in the filter table. FORWARD jumps to

@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bmbox/pkg/hypervisor"
-	"bmbox/pkg/logging"
-	"bmbox/pkg/topology"
+	"github.com/the-daonm/bmbox/pkg/hypervisor"
+	"github.com/the-daonm/bmbox/pkg/logging"
+	"github.com/the-daonm/bmbox/pkg/topology"
 )
 
 var version = "dev"

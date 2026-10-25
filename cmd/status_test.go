@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"bmbox/pkg/engine"
-	"bmbox/pkg/workspace"
+	"github.com/the-daonm/bmbox/pkg/engine"
+	"github.com/the-daonm/bmbox/pkg/workspace"
 )
 
 func TestStatusJSONShape(t *testing.T) {

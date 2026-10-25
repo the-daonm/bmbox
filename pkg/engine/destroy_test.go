@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"bmbox/pkg/topology"
-	"bmbox/pkg/workspace"
+	"github.com/the-daonm/bmbox/pkg/topology"
+	"github.com/the-daonm/bmbox/pkg/workspace"
 )
 
 func TestMergePreviousKeepsHistoryOnFailure(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bmbox/pkg/setup"
-	"bmbox/pkg/workspace"
+	"github.com/the-daonm/bmbox/pkg/setup"
+	"github.com/the-daonm/bmbox/pkg/workspace"
 )
 
 var (

@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bmbox/pkg/workspace"
+	"github.com/the-daonm/bmbox/pkg/workspace"
 )
 
 var listCmd = &cobra.Command{

@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"bmbox/pkg/netboot"
-	"bmbox/pkg/workspace"
+	"github.com/the-daonm/bmbox/pkg/netboot"
+	"github.com/the-daonm/bmbox/pkg/workspace"
 )
 
 // The BMC emulators bmbox is tested with (scripts/e2e.sh). The IPMI

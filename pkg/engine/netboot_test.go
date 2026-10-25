@@ -3,7 +3,7 @@ package engine
 import (
 	"testing"
 
-	"bmbox/pkg/topology"
+	"github.com/the-daonm/bmbox/pkg/topology"
 )
 
 func TestNetbootSpec(t *testing.T) {

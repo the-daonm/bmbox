@@ -10,10 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bmbox/pkg/bmc"
-	"bmbox/pkg/doctor"
-	"bmbox/pkg/netboot"
-	"bmbox/pkg/workspace"
+	"github.com/the-daonm/bmbox/pkg/bmc"
+	"github.com/the-daonm/bmbox/pkg/doctor"
+	"github.com/the-daonm/bmbox/pkg/netboot"
+	"github.com/the-daonm/bmbox/pkg/workspace"
 )
 
 var doctorCmd = &cobra.Command{

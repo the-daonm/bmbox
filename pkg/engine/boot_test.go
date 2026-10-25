@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"bmbox/pkg/workspace"
+	"github.com/the-daonm/bmbox/pkg/workspace"
 )
 
 func TestBootUnitContent(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"bmbox/pkg/systemd"
-	"bmbox/pkg/workspace"
+	"github.com/the-daonm/bmbox/pkg/systemd"
+	"github.com/the-daonm/bmbox/pkg/workspace"
 )
 
 func TestVersionCheck(t *testing.T) {

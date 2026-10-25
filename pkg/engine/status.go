@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"bmbox/pkg/bmc"
-	"bmbox/pkg/hypervisor"
-	"bmbox/pkg/netboot"
-	"bmbox/pkg/systemd"
-	"bmbox/pkg/workspace"
+	"github.com/the-daonm/bmbox/pkg/bmc"
+	"github.com/the-daonm/bmbox/pkg/hypervisor"
+	"github.com/the-daonm/bmbox/pkg/netboot"
+	"github.com/the-daonm/bmbox/pkg/systemd"
+	"github.com/the-daonm/bmbox/pkg/workspace"
 )
 
 // NodeStatus is the live state of a node. The JSON form is part of the

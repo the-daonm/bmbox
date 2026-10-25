@@ -8,10 +8,10 @@ import (
 	"sort"
 	"strings"
 
-	"bmbox/pkg/hypervisor"
-	"bmbox/pkg/network"
-	"bmbox/pkg/systemd"
-	"bmbox/pkg/topology"
+	"github.com/the-daonm/bmbox/pkg/hypervisor"
+	"github.com/the-daonm/bmbox/pkg/network"
+	"github.com/the-daonm/bmbox/pkg/systemd"
+	"github.com/the-daonm/bmbox/pkg/topology"
 )
 
 // orphans are resources bmbox created for the lab that the topology no

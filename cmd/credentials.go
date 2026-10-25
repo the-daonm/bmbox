@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bmbox/pkg/bmc"
-	"bmbox/pkg/workspace"
+	"github.com/the-daonm/bmbox/pkg/bmc"
+	"github.com/the-daonm/bmbox/pkg/workspace"
 )
 
 var credentialsCmd = &cobra.Command{
