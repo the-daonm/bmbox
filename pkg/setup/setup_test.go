@@ -197,3 +197,11 @@ func TestNoSystemdLeavesLibvirtAlone(t *testing.T) {
 		t.Errorf("no warning:\n%s", out.String())
 	}
 }
+
+func TestPinnedVersionsComeFromRequirements(t *testing.T) {
+	for pkg, got := range map[string]string{"sushy-tools": SushyToolsVersion, "virtualbmc": VirtualBMCVersion} {
+		if !strings.Contains(requirements, pkg+"=="+got+"\n") {
+			t.Errorf("%s pinned to %q, not what requirements.txt says", pkg, got)
+		}
+	}
+}

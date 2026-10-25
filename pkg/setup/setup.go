@@ -5,6 +5,7 @@
 package setup
 
 import (
+	_ "embed"
 	"fmt"
 	"io"
 	"os"
@@ -16,13 +17,27 @@ import (
 	"github.com/the-daonm/bmbox/pkg/workspace"
 )
 
-// The BMC emulators bmbox is tested with (scripts/e2e.sh). The IPMI
-// launcher uses virtualbmc's VirtualBMC class directly, so other versions
-// may break it: change these only together with an e2e run.
-const (
-	SushyToolsVersion = "2.2.0"
-	VirtualBMCVersion = "3.3.0"
+// requirements pins the BMC emulators bmbox is tested with (see the file).
+//
+//go:embed requirements.txt
+var requirements string
+
+// The pinned versions, from requirements.txt.
+var (
+	SushyToolsVersion = pinned("sushy-tools")
+	VirtualBMCVersion = pinned("virtualbmc")
 )
+
+// pinned returns the version requirements.txt pins pkg to.
+func pinned(pkg string) string {
+	for _, line := range strings.Split(requirements, "\n") {
+		name, ver, ok := strings.Cut(strings.TrimSpace(line), "==")
+		if ok && strings.EqualFold(strings.TrimSpace(name), pkg) {
+			return strings.TrimSpace(ver)
+		}
+	}
+	panic("requirements.txt does not pin " + pkg)
+}
 
 // PackageManager installs distribution packages.
 type PackageManager struct {

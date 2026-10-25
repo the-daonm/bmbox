@@ -1,0 +1,6 @@
+# The BMC emulators bmbox installs in its virtualenv (bmbox setup), embedded
+# in the binary. The IPMI launcher uses virtualbmc's VirtualBMC class
+# directly, so only versions the e2e test passed with belong here: Dependabot
+# proposes updates, and CI runs the e2e test on them.
+sushy-tools==2.2.0
+virtualbmc==3.3.0
