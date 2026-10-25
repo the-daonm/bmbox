@@ -1,0 +1,48 @@
+# Packages for `make packages` (see the Makefile). VERSION comes from git.
+name: bmbox
+arch: amd64
+platform: linux
+version: ${VERSION}
+version_schema: none
+maintainer: daonm <144655574+the-daonm@users.noreply.github.com>
+description: |
+  Declarative virtualized bare-metal testbed engine: KVM + UEFI nodes,
+  bridges, DHCP/iPXE netboot and Redfish/IPMI BMCs from a topology file.
+homepage: https://github.com/the-daonm/bmbox
+license: Apache-2.0
+contents:
+  - src: bin/bmbox
+    dst: /usr/bin/bmbox
+    file_info:
+      mode: 0755
+  - src: examples/topology.yaml
+    dst: /usr/share/doc/bmbox/examples/topology.yaml
+  - src: README.md
+    dst: /usr/share/doc/bmbox/README.md
+# The BMC emulators come from PyPI at tested versions: run `sudo bmbox
+# setup` after installing, which also installs anything missing here.
+overrides:
+  deb:
+    depends:
+      - libvirt-daemon-system
+      - qemu-system-x86
+      - ovmf
+      - python3-venv
+      - python3-libvirt
+    recommends:
+      - dnsmasq-base
+      - ipxe
+      - ipmitool
+      - iptables
+  rpm:
+    depends:
+      - libvirt
+      - qemu-kvm
+      - edk2-ovmf
+      - python3
+      - python3-libvirt
+    recommends:
+      - dnsmasq
+      - ipxe-bootimgs-x86
+      - ipmitool
+      - iptables
