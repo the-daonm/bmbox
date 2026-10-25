@@ -26,7 +26,9 @@ IPMI_PORT=${E2E_IPMI_PORT:-6390}
 KERNEL=${E2E_KERNEL:-/boot/vmlinuz}
 INITRD=${E2E_INITRD:-/boot/initrd.img}
 URI=${LIBVIRT_DEFAULT_URI:-qemu:///system}
-WS=${BMBOX_HOME:-$HOME/.bmbox}
+WS=${BMBOX_HOME:-/var/lib/bmbox}
+# Pass BMBOX_HOME on only when set, so the default workspace is what is tested.
+HOMEENV=${BMBOX_HOME:+BMBOX_HOME=$BMBOX_HOME}
 STATE=$WS/labs/$LAB/state.json
 LOCK=$WS/labs/$LAB/.lock
 NS=https://bmbox.io/xmlns/libvirt/v1
@@ -107,7 +109,7 @@ EOF
 # ---- helpers ----------------------------------------------------------------
 # bmbox and virsh always see the same workspace and libvirt.
 bm() {
-	sudo env BMBOX_HOME="$WS" LIBVIRT_DEFAULT_URI="$URI" \
+	sudo env $HOMEENV LIBVIRT_DEFAULT_URI="$URI" \
 		BMBOX_SUSHY_EMULATOR="${BMBOX_SUSHY_EMULATOR:-}" BMBOX_VBMC="${BMBOX_VBMC:-}" \
 		BMBOX_DNSMASQ="${BMBOX_DNSMASQ:-}" BMBOX_IPXE="${BMBOX_IPXE:-}" \
 		"$BMBOX" "$@"
@@ -163,7 +165,7 @@ host_snapshot() {
 	echo "## pools"; pools | grep -vx "bmbox-$LAB" | sort
 	echo "## bridges"; other_bridges
 	echo "## bmbox units"; other_units
-	echo "## bmbox data"; sudo ls /var/lib/bmbox 2>/dev/null | grep -vx "$LAB"
+	echo "## bmbox data"; sudo ls /var/lib/bmbox 2>/dev/null | grep -vxE "$LAB|labs|tools|tools.json"
 	for t in iptables ip6tables; do
 		echo "## $t FORWARD"
 		sudo $t -w -S FORWARD 2>/dev/null
@@ -192,7 +194,7 @@ is_power() { [ "$(power_state)" = "$1" ]; }
 console_to() { # file seconds: attach to n1 without input, keep the output
 	# Replay the whole boot: n1 has netbooted, the firmware lines are far
 	# above the default 20-line tail.
-	sudo timeout "$2" env BMBOX_HOME="$WS" "$BMBOX" console n1 --lab "$LAB" -n 5000 </dev/null >"$1" 2>&1
+	sudo timeout "$2" env $HOMEENV "$BMBOX" console n1 --lab "$LAB" -n 5000 </dev/null >"$1" 2>&1
 	return 0
 }
 replay_is_clean() { # file: has a replay, and the replay (not live output) never clears
@@ -204,7 +206,7 @@ sys.exit(0 if sep and b"\x1b[2J" not in replay and b"Start PXE" in replay else 1
 PY
 }
 
-lock_free() { flock -n "$LOCK" true; }
+lock_free() { sudo flock -n "$LOCK" true; }
 
 # ---- run ----------------------------------------------------------------------
 echo "bmbox e2e: lab=$LAB workspace=$WS libvirt=$URI ($("$BMBOX" --version))"
@@ -255,7 +257,7 @@ check "Reset On" reset On
 check "PowerState becomes On" wait_for 15 is_power On
 
 section "Netboot (n1)"
-n1_leased() { sudo env BMBOX_HOME="$WS" LIBVIRT_DEFAULT_URI="$URI" "$BMBOX" status --lab "$LAB" | grep -qE "^n1 +running +$N1_IP "; }
+n1_leased() { sudo env $HOMEENV LIBVIRT_DEFAULT_URI="$URI" "$BMBOX" status --lab "$LAB" | grep -qE "^n1 +running +$N1_IP "; }
 served() { sudo journalctl -u "$DHCP_UNIT" --since "@$T0" --no-pager | grep -q "sent $DHCP_DIR/tftp/$1 to $N1_IP"; }
 check "n1 gets its fixed address $N1_IP (status)" wait_for 60 n1_leased
 check "firmware loads iPXE over TFTP" wait_for 30 served ipxe.efi
@@ -271,7 +273,7 @@ check "re-attach replays history without clearing the screen" replay_is_clean "$
 check "Reset ForceOff" reset ForceOff
 check "PowerState becomes Off" wait_for 15 is_power Off
 check "console on a powered-off node prints the BMC power-on command" \
-	bash -c "! sudo env BMBOX_HOME='$WS' '$BMBOX' console n1 --lab $LAB </dev/null >'$OUT.c' 2>&1 && grep -q 'ResetType' '$OUT.c'"
+	bash -c "! sudo env $HOMEENV '$BMBOX' console n1 --lab $LAB </dev/null >'$OUT.c' 2>&1 && grep -q 'ResetType' '$OUT.c'"
 
 section "IPMI (n2)"
 check "power status off" bash -c 'ipmi power status | grep -q "is off"'
@@ -330,13 +332,15 @@ fi
 fwd_cleanup
 
 section "Locking"
-# Hold the lab lock from this shell on fd 9 (no child process can keep it).
-exec 9>>"$LOCK"
-check "test holds the lab lock" flock -n 9
+# The workspace belongs to root: hold the lab lock from a root process.
+sudo flock -n "$LOCK" sleep 20 &
+LOCKER=$!
+check "test holds the lab lock" wait_for 5 bash -c "! sudo flock -n '$LOCK' true"
 check "a second command on the same lab is refused" \
-	bash -c "sudo env BMBOX_HOME='$WS' '$BMBOX' up -f '$FULL' 9>&- 2>&1 | grep -q 'already running'"
-exec 9>&-
-check "lock released" lock_free
+	bash -c "sudo env $HOMEENV '$BMBOX' up -f '$FULL' 2>&1 | grep -q 'already running'"
+sudo pkill -f "flock -n $LOCK sleep" 2>/dev/null
+wait "$LOCKER" 2>/dev/null
+check "lock released" wait_for 5 lock_free
 
 section "destroy"
 check "destroy succeeds" bm destroy --lab "$LAB"
@@ -345,7 +349,7 @@ check "workspace of lab $LAB removed" test ! -e "$WS/labs/$LAB"
 host_snapshot >"$TMP/after"
 check "rest of the host unchanged (domains, pools, bridges, units, sysctls)" diff "$TMP/before" "$TMP/after"
 check "second destroy reports there is nothing to do" \
-	bash -c "! sudo env BMBOX_HOME='$WS' LIBVIRT_DEFAULT_URI='$URI' '$BMBOX' destroy --lab $LAB >'$OUT.d' 2>&1 && grep -q 'nothing found' '$OUT.d'"
+	bash -c "! sudo env $HOMEENV LIBVIRT_DEFAULT_URI='$URI' '$BMBOX' destroy --lab $LAB >'$OUT.d' 2>&1 && grep -q 'nothing found' '$OUT.d'"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
