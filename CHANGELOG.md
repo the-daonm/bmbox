@@ -7,6 +7,10 @@ versions may change behaviour.
 
 ## [Unreleased]
 
+### Fixed
+- `bmbox doctor` no longer warns that iPXE needs dnsmasq when dnsmasq is
+  only known from the remembered tool paths.
+
 ## [0.1.0] - 2026-10-26
 
 First public release.
