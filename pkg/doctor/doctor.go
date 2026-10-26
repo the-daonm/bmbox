@@ -57,7 +57,7 @@ func Run(ctx context.Context, opt Options) []Check {
 	add(checkRedfish(opt.Tools.SushyEmulator))
 	add(checkIPMI(opt.Tools.VBMC))
 	add(checkDnsmasq(opt.Tools.Dnsmasq))
-	add(checkIPXE(opt.Tools.IPXE))
+	add(checkIPXE(opt.Tools.Dnsmasq, opt.Tools.IPXE))
 	add(checkBinary())
 	cs = append(cs, checkLabs(opt.Workspace)...)
 	return cs
@@ -203,8 +203,10 @@ func checkDnsmasq(dnsmasq string) Check {
 	return Check{Name: "dnsmasq", Status: OK, Detail: strings.TrimSpace(ver) + " at " + t.Dnsmasq}
 }
 
-func checkIPXE(ipxe string) Check {
-	t, err := netboot.FindTools("", ipxe, true)
+// checkIPXE looks for iPXE the way up does, with the remembered dnsmasq:
+// FindTools resolves dnsmasq first, and dnsmasq is often not on the PATH.
+func checkIPXE(dnsmasq, ipxe string) Check {
+	t, err := netboot.FindTools(dnsmasq, ipxe, true)
 	if t.IPXE == "" {
 		msg := "iPXE UEFI binary not found"
 		if err != nil {

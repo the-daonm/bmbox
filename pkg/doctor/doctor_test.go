@@ -53,3 +53,18 @@ func TestLabsWithoutBootUnitWarn(t *testing.T) {
 		t.Errorf("checks = %+v", got)
 	}
 }
+
+func TestIPXEUsesRememberedDnsmasq(t *testing.T) {
+	dir := t.TempDir()
+	dnsmasq := filepath.Join(dir, "dnsmasq")
+	ipxe := filepath.Join(dir, "snponly.efi")
+	for _, p := range []string{dnsmasq, ipxe} {
+		if err := os.WriteFile(p, nil, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := checkIPXE(dnsmasq, ipxe)
+	if c.Status != OK || c.Detail != ipxe {
+		t.Fatalf("checkIPXE = %+v, want OK with %s", c, ipxe)
+	}
+}
