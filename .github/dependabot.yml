@@ -38,3 +38,13 @@ updates:
     labels: [dependencies, bmc]
     commit-message:
       prefix: setup
+
+  # The documentation site (docs/requirements.txt, see workflows/docs.yml).
+  - package-ecosystem: pip
+    directory: /docs
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, docs]
+    commit-message:
+      prefix: docs
