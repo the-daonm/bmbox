@@ -8,7 +8,7 @@ GO      ?= go
 NFPM    := $(GO) run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
 STATICCHECK := $(GO) run honnef.co/go/tools/cmd/staticcheck@v0.8.2
 
-.PHONY: build test lint e2e dist packages clean
+.PHONY: build test lint e2e dist packages docs clean
 
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '$(LDFLAGS)' -o bin/bmbox .
@@ -40,5 +40,10 @@ packages:
 	VERSION=$(VERSION) $(NFPM) package --config packaging/nfpm.yaml --packager rpm --target dist/
 	cd dist && sha256sum * > SHA256SUMS
 
+# Documentation site (GitHub Pages), served on http://127.0.0.1:8000.
+docs:
+	python3 -m venv .venv-docs && .venv-docs/bin/pip install -q -r docs/requirements.txt
+	.venv-docs/bin/mkdocs serve
+
 clean:
-	rm -rf bin dist
+	rm -rf bin dist site
