@@ -45,9 +45,12 @@ jobs:
         with:
           name: bmbox
       - run: install -m 0755 bmbox /usr/local/bin/bmbox && bmbox --version
-      - name: Sync the package database (Arch)
+      # A full upgrade, not just -Sy: the image lags the repositories, and
+      # installing new packages onto it is a partial upgrade that Arch does
+      # not support (it broke when openssl was split into openssl-3).
+      - name: Upgrade the system (Arch)
         if: startsWith(matrix.image, 'archlinux')
-        run: pacman -Sy --noconfirm
+        run: pacman -Syu --noconfirm
       - name: bmbox setup
         run: bmbox setup
       - name: bmbox setup again changes nothing
