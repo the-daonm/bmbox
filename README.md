@@ -5,6 +5,8 @@
 
 **Virtual bare-metal labs from a single YAML file.**
 
+Documentation: **https://the-daonm.github.io/bmbox/**
+
 > **Status: beta.** bmbox is used and tested end to end, but before 1.0 the
 > topology format (`bmbox.io/v1alpha1`) and command-line behaviour can still
 > change between minor versions. Changes are listed in the
